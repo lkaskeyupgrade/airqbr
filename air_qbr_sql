@@ -1,15 +1,31 @@
 -- ============================================================
 -- Air Vertical QBR: CONSOLIDATED, CURRENT QUERY SET
--- Vertical/partner filters now use lower(...) on both sides for
+-- Vertical/partner filters use lower(...) on both sides for
 -- robustness against any casing inconsistency (not just the
 -- specific 'AIR' vs 'Air' issue found earlier).
 -- Queries 8-10 (Total Unique Customers / New vs Repeat /
 -- Demographics) use partner_classification_aggregate (pc),
--- joined via pc.sdk_key_id = a.sdk_key_mapping_id, sourced from
--- core.application_bnpl consistently across all three.
+-- joined two ways via LEFT JOIN + COALESCE: first
+-- pc1.sdk_key_id = a.sdk_key_mapping_id, falling back to
+-- pc2.upcode = a.uplift_upcode when the first doesn't match -
+-- sdk_key_mapping_id alone was found to be NULL on most
+-- pre-2025 records, silently dropping over 2 years of history
+-- with a plain INNER JOIN on it alone.
 -- Queries 1-7 (which only touch kpi_dashboard, no
 -- application_bnpl/loan_issued_bnpl-based partner join) use
 -- k.partner_grouping_legacy/k.partner_short/k.vertical directly.
+--
+-- DATE RANGE: the upper bound on queries 1, 2, 3, and 7 is now
+-- dynamic - date_etz < date_trunc('QUARTER', CURRENT_DATE) -
+-- which always resolves to the start of the CURRENT (in-progress)
+-- quarter, so the data always includes everything through the
+-- end of the most recently COMPLETED quarter with no manual edit
+-- needed each cycle. Run today (mid Q3 2026) this evaluates to
+-- '2026-07-01'; run in October (Q4) it becomes '2026-10-01', etc.
+-- The LOWER bound (date_etz >= '2024-01-01') is intentionally
+-- still a fixed, hardcoded date - it was NOT made dynamic, since
+-- there's no "always X years back" requirement given yet. Extend
+-- this manually if the historical start date ever needs to move.
 -- ============================================================
 
 
@@ -29,15 +45,16 @@ SELECT
     AVG(TRY_CAST(k.fico AS DOUBLE))                                   AS avg_fico
 FROM commercial_analytics.public.kpi_dashboard k
 WHERE lower(k.vertical) = 'air'
-  AND lower(k.partner_grouping_legacy) IN (
-      'aeromexico', 'air canada', 'alaska airlines', 'allegiant air',
-      'emirates', 'frontier airlines', 'united airlines', 'southwest airlines'
-  )
+  -- AND lower(k.partner_grouping_legacy) IN (
+  -- 'aeromexico', 'air canada', 'alaska airlines', 'allegiant air',
+  -- 'emirates', 'frontier airlines', 'united airlines', 'southwest airlines'
+  -- )
   AND k.date_etz >= '2024-01-01'
-  AND k.date_etz < '2026-07-01'
+  AND k.date_etz < date_trunc('QUARTER', CURRENT_DATE)
 GROUP BY 1, 2, 3
 ORDER BY 1, 2, 3;
 
+select * from databrickstors_canalytics_catalog.decisioning.applicant limit 10
 
 -- ============================================================
 -- 2. Device Type (daily breakdown)
@@ -47,11 +64,11 @@ SELECT
     COUNT(*) AS loan_count
 FROM commercial_analytics.public.kpi_dashboard k
 WHERE lower(k.vertical) = 'air'
-  AND lower(k.partner_grouping_legacy) IN (
-      'aeromexico', 'air canada', 'alaska airlines', 'allegiant air',
-      'emirates', 'frontier airlines', 'united airlines', 'southwest airlines'
-  )
-  AND k.date_etz >= '2024-01-01' AND k.date_etz < '2026-07-01'
+  -- AND lower(k.partner_grouping_legacy) IN (
+  -- 'aeromexico', 'air canada', 'alaska airlines', 'allegiant air',
+  -- 'emirates', 'frontier airlines', 'united airlines', 'southwest airlines'
+  -- )
+  AND k.date_etz >= '2024-01-01' AND k.date_etz < date_trunc('QUARTER', CURRENT_DATE)
 GROUP BY 1, 2, 3, 4
 ORDER BY 1, 2, 3, 4;
 
@@ -65,11 +82,11 @@ SELECT
     COUNT(*) AS loan_count
 FROM commercial_analytics.public.kpi_dashboard k
 WHERE lower(k.vertical) = 'air'
-  AND lower(k.partner_grouping_legacy) IN (
-      'aeromexico', 'air canada', 'alaska airlines', 'allegiant air',
-      'emirates', 'frontier airlines', 'united airlines', 'southwest airlines'
-  )
-  AND k.date_etz >= '2024-01-01' AND k.date_etz < '2026-07-01'
+  -- AND lower(k.partner_grouping_legacy) IN (
+  -- 'aeromexico', 'air canada', 'alaska airlines', 'allegiant air',
+  -- 'emirates', 'frontier airlines', 'united airlines', 'southwest airlines'
+  -- )
+  AND k.date_etz >= '2024-01-01' AND k.date_etz < date_trunc('QUARTER', CURRENT_DATE)
 GROUP BY 1, 2, 3, 4
 ORDER BY 1, 2, 3, 4;
 
@@ -84,10 +101,10 @@ SELECT * FROM (
         ROW_NUMBER() OVER (PARTITION BY partner_grouping_legacy, partner_short ORDER BY SUM(loan_count) DESC) AS rank
     FROM commercial_analytics.public.kpi_dashboard
     WHERE lower(vertical) = 'air'
-      AND lower(partner_grouping_legacy) IN (
-          'aeromexico', 'air canada', 'alaska airlines', 'allegiant air',
-          'emirates', 'frontier airlines', 'united airlines', 'southwest airlines'
-      )
+      -- AND lower(partner_grouping_legacy) IN (
+      -- 'aeromexico', 'air canada', 'alaska airlines', 'allegiant air',
+      -- 'emirates', 'frontier airlines', 'united airlines', 'southwest airlines'
+      -- )
       AND TRY_CAST(date_etz AS DATE) >= ADD_MONTHS(CURRENT_DATE, -12)
       AND air_od IS NOT NULL
     GROUP BY ALL
@@ -106,10 +123,10 @@ SELECT * FROM (
         ROW_NUMBER() OVER (PARTITION BY partner_grouping_legacy, partner_short ORDER BY SUM(loan_count) DESC) AS rn
     FROM commercial_analytics.public.kpi_dashboard
     WHERE lower(vertical) = 'air'
-      AND lower(partner_grouping_legacy) IN (
-          'aeromexico', 'air canada', 'alaska airlines', 'allegiant air',
-          'emirates', 'frontier airlines', 'united airlines', 'southwest airlines'
-      )
+      -- AND lower(partner_grouping_legacy) IN (
+      -- 'aeromexico', 'air canada', 'alaska airlines', 'allegiant air',
+      -- 'emirates', 'frontier airlines', 'united airlines', 'southwest airlines'
+      -- )
       AND TRY_CAST(date_etz AS DATE) >= ADD_MONTHS(CURRENT_DATE, -12)
       AND air_origin IS NOT NULL
     GROUP BY ALL
@@ -128,10 +145,10 @@ SELECT * FROM (
         ROW_NUMBER() OVER (PARTITION BY partner_grouping_legacy, partner_short ORDER BY SUM(loan_count) DESC) AS rn
     FROM commercial_analytics.public.kpi_dashboard
     WHERE lower(vertical) = 'air'
-      AND lower(partner_grouping_legacy) IN (
-          'aeromexico', 'air canada', 'alaska airlines', 'allegiant air',
-          'emirates', 'frontier airlines', 'united airlines', 'southwest airlines'
-      )
+      -- AND lower(partner_grouping_legacy) IN (
+      -- 'aeromexico', 'air canada', 'alaska airlines', 'allegiant air',
+      -- 'emirates', 'frontier airlines', 'united airlines', 'southwest airlines'
+      -- )
       AND TRY_CAST(date_etz AS DATE) >= ADD_MONTHS(CURRENT_DATE, -12)
       AND air_destination IS NOT NULL
     GROUP BY ALL
@@ -158,11 +175,11 @@ FROM commercial_analytics.public.kpi_dashboard k
 JOIN databrickstors_canalytics_catalog.core.loan_issued_bnpl l
     ON CAST(l.loan_id AS STRING) = CAST(k.loan_id AS STRING)
 WHERE lower(k.vertical) = 'air'
-  AND lower(k.partner_grouping_legacy) IN (
-      'aeromexico', 'air canada', 'alaska airlines', 'allegiant air',
-      'emirates', 'frontier airlines', 'united airlines', 'southwest airlines'
-  )
-  AND k.date_etz >= '2024-01-01' AND k.date_etz < '2026-07-01'
+  -- AND lower(k.partner_grouping_legacy) IN (
+  -- 'aeromexico', 'air canada', 'alaska airlines', 'allegiant air',
+  -- 'emirates', 'frontier airlines', 'united airlines', 'southwest airlines'
+  -- )
+  AND k.date_etz >= '2024-01-01' AND k.date_etz < date_trunc('QUARTER', CURRENT_DATE)
 GROUP BY 1, 2, 3, 4
 ORDER BY 1, 2, 3, 4;
 
@@ -192,10 +209,10 @@ LEFT JOIN commercial_analytics.public.partner_classification_aggregate pc1
 LEFT JOIN commercial_analytics.public.partner_classification_aggregate pc2
     ON pc2.upcode = a.uplift_upcode
 WHERE lower(COALESCE(pc1.vertical, pc2.vertical)) = 'air'
-  AND lower(COALESCE(pc1.partner_grouping, pc2.partner_grouping)) IN (
-      'aeromexico', 'air canada', 'alaska airlines', 'allegiant air',
-      'emirates', 'frontier airlines', 'united airlines', 'southwest airlines'
-  )
+  -- AND lower(COALESCE(pc1.partner_grouping, pc2.partner_grouping)) IN (
+  -- 'aeromexico', 'air canada', 'alaska airlines', 'allegiant air',
+  -- 'emirates', 'frontier airlines', 'united airlines', 'southwest airlines'
+  -- )
 GROUP BY 1, 2, 3
 ORDER BY 1, 2;
 
@@ -225,10 +242,10 @@ WITH emirates_loans AS (
     JOIN commercial_analytics.public.kpi_dashboard k
         ON k.loan_id = l.loan_id
     WHERE lower(COALESCE(pc1.vertical, pc2.vertical)) = 'air'
-      AND lower(COALESCE(pc1.partner_grouping, pc2.partner_grouping)) IN (
-          'aeromexico', 'air canada', 'alaska airlines', 'allegiant air',
-          'emirates', 'frontier airlines', 'united airlines', 'southwest airlines'
-      )
+      -- AND lower(COALESCE(pc1.partner_grouping, pc2.partner_grouping)) IN (
+      -- 'aeromexico', 'air canada', 'alaska airlines', 'allegiant air',
+      -- 'emirates', 'frontier airlines', 'united airlines', 'southwest airlines'
+      -- )
 )
 SELECT
     partner_group, partner_short, vertical,
@@ -272,9 +289,9 @@ SELECT
         ELSE 'Unknown'
     END AS generation,
     CASE
-        WHEN YEAR(from_utc_timestamp(l.origination_date, 'America/New_York')) = 2024 THEN 'FY 2024'
-        WHEN YEAR(from_utc_timestamp(l.origination_date, 'America/New_York')) = 2025 THEN 'FY 2025'
-        WHEN YEAR(from_utc_timestamp(l.origination_date, 'America/New_York')) = 2026 THEN 'YTD 2026'
+        WHEN YEAR(from_utc_timestamp(l.origination_date, 'America/New_York')) = YEAR(CURRENT_DATE)
+            THEN CONCAT('YTD ', YEAR(from_utc_timestamp(l.origination_date, 'America/New_York')))
+        ELSE CONCAT('FY ', YEAR(from_utc_timestamp(l.origination_date, 'America/New_York')))
     END AS period,
     l.currency,
     COUNT(DISTINCT a.legal_entity_id) AS unique_customers,
@@ -293,21 +310,22 @@ LEFT JOIN commercial_analytics.public.partner_classification_aggregate pc2
 JOIN commercial_analytics.public.kpi_dashboard k
     ON k.loan_id = l.loan_id    
 WHERE lower(COALESCE(pc1.vertical, pc2.vertical)) = 'air'
-  AND lower(COALESCE(pc1.partner_grouping, pc2.partner_grouping)) IN (
-      'aeromexico', 'air canada', 'alaska airlines', 'allegiant air',
-      'emirates', 'frontier airlines', 'united airlines', 'southwest airlines'
-  )
-  AND YEAR(from_utc_timestamp(l.origination_date, 'America/New_York')) IN (2024, 2025, 2026)
+  -- AND lower(COALESCE(pc1.partner_grouping, pc2.partner_grouping)) IN (
+  -- 'aeromexico', 'air canada', 'alaska airlines', 'allegiant air',
+  -- 'emirates', 'frontier airlines', 'united airlines', 'southwest airlines'
+  -- )
+  AND YEAR(from_utc_timestamp(l.origination_date, 'America/New_York')) >= 2024
 GROUP BY 1, 2, 3, 4, 5, 6
 ORDER BY 1, 4, 3;
 
+
 -- ============================================================
--- 11. Air Vertical QBR: Trip Duration (daily bucket breakdown)
--- Buckets each individual loan's actual trip duration FIRST,
--- then counts loans per bucket per day - this preserves the true
--- distribution (unlike averaging duration per day and bucketing
--- the averages, which was shown to distort short and long-tail
--- trips almost out of existence).
+-- 11. Trip Duration (daily bucket breakdown)
+-- Buckets each individual loan's actual trip length (departure to
+-- arrival) FIRST, then counts loans per bucket per day - this
+-- preserves the true distribution, unlike averaging duration per
+-- day and bucketing the averages (which was shown to distort short
+-- and long-tail trips almost out of existence).
 -- ============================================================
 SELECT
     partner_grouping_legacy,
@@ -330,13 +348,13 @@ FROM (
         DATEDIFF(TRY_CAST(k.air_arrival_date AS DATE), TRY_CAST(k.air_departure_date AS DATE)) AS trip_days
     FROM commercial_analytics.public.kpi_dashboard k
     WHERE lower(k.vertical) = 'air'
-      AND lower(k.partner_grouping_legacy) IN (
-          'aeromexico', 'air canada', 'alaska airlines', 'allegiant air',
-          'emirates', 'frontier airlines', 'united airlines', 'southwest airlines'
-      )
+      -- AND lower(k.partner_grouping_legacy) IN (
+      -- 'aeromexico', 'air canada', 'alaska airlines', 'allegiant air',
+      -- 'emirates', 'frontier airlines', 'united airlines', 'southwest airlines'
+      -- )
       AND k.date_etz >= '2024-01-01'
       AND k.date_etz < date_trunc('QUARTER', CURRENT_DATE)
 )
 WHERE trip_days IS NOT NULL AND trip_days >= 0
 GROUP BY 1, 2, 3, 4
-ORDER BY 1, 2, 3, 4
+ORDER BY 1, 2, 3, 4;
