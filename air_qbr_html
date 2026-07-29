@@ -1,780 +1,360 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Air Vertical QBR</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
-<style>
-:root{--g1:#1C3F11;--g2:#265516;--g3:#387E23;--g4:#4FA030;--g5:#7DC05E;--g6:#AEDD94;
-  --light:#EAF2E6;--bg:#F4F8F2;--sf:#FFFFFF;--bd:#CCDFC7;--bl:#DFF0DA;
-  --tx:#0D1F09;--mu:#3D6030;--fa:#7DA870;--r:10px;--sh:0 1px 3px rgba(0,0,0,.08)}
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--tx);font-size:14px}
-.hd{background:var(--g1);padding:12px 22px;display:flex;align-items:center;justify-content:space-between}
-.hd-l{display:flex;align-items:center;gap:11px}
-.hbar{width:5px;height:34px;background:var(--g3);border-radius:3px}
-.hd h1{font-size:16px;font-weight:600;color:#fff;letter-spacing:-.3px}
-.hd-s{font-size:11px;color:rgba(255,255,255,.55);margin-top:2px}
-.hd-r{font-size:11px;color:rgba(255,255,255,.45);text-align:right;line-height:1.7}
+-- ============================================================
+-- Air Vertical QBR: CONSOLIDATED, CURRENT QUERY SET
+-- Vertical/partner filters use lower(...) on both sides for
+-- robustness against any casing inconsistency (not just the
+-- specific 'AIR' vs 'Air' issue found earlier).
+-- Queries 8-10 (Total Unique Customers / New vs Repeat /
+-- Demographics) use partner_classification_aggregate (pc),
+-- joined two ways via LEFT JOIN + COALESCE: first
+-- pc1.sdk_key_id = a.sdk_key_mapping_id, falling back to
+-- pc2.upcode = a.uplift_upcode when the first doesn't match -
+-- sdk_key_mapping_id alone was found to be NULL on most
+-- pre-2025 records, silently dropping over 2 years of history
+-- with a plain INNER JOIN on it alone.
+-- Queries 1-7 (which only touch kpi_dashboard, no
+-- application_bnpl/loan_issued_bnpl-based partner join) use
+-- k.partner_grouping_legacy/k.partner_short/k.vertical directly.
+--
+-- DATE RANGE: the upper bound on queries 1, 2, 3, and 7 is now
+-- dynamic - date_etz < date_trunc('QUARTER', CURRENT_DATE) -
+-- which always resolves to the start of the CURRENT (in-progress)
+-- quarter, so the data always includes everything through the
+-- end of the most recently COMPLETED quarter with no manual edit
+-- needed each cycle. Run today (mid Q3 2026) this evaluates to
+-- '2026-07-01'; run in October (Q4) it becomes '2026-10-01', etc.
+-- The LOWER bound (date_etz >= '2024-01-01') is intentionally
+-- still a fixed, hardcoded date - it was NOT made dynamic, since
+-- there's no "always X years back" requirement given yet. Extend
+-- this manually if the historical start date ever needs to move.
+-- ============================================================
 
-/* LOAD SCREEN */
-.load-screen{display:flex;align-items:center;justify-content:center;height:calc(100vh - 60px);flex-direction:column;gap:14px}
-.load-card{background:var(--sf);border:1px solid var(--bd);border-radius:var(--r);padding:36px 44px;box-shadow:var(--sh);text-align:center;max-width:420px}
-.load-card h2{font-size:16px;margin-bottom:8px}
-.load-card p{font-size:12px;color:var(--mu);margin-bottom:18px;line-height:1.5}
-.load-btn{background:var(--g2);color:#fff;border:none;padding:9px 22px;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer}
-.load-btn:hover{background:var(--g1)}
-.load-err{color:#B23A3A;font-size:12px;margin-top:10px}
-#file-input{display:none}
 
-/* FILTER BAR */
-.fb{background:var(--sf);border-bottom:1px solid var(--bd);padding:7px 22px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;position:sticky;top:0;z-index:100;box-shadow:0 1px 4px rgba(0,0,0,.06)}
-.fbl{font-size:10px;font-weight:600;color:var(--mu);text-transform:uppercase;letter-spacing:.5px;white-space:nowrap}
-.fbg{display:flex;gap:3px;flex-wrap:wrap}
-.fbb{padding:3px 10px;font-size:11px;font-weight:500;border:1px solid var(--bd);border-radius:12px;cursor:pointer;background:none;color:var(--mu);transition:all .12s;white-space:nowrap}
-.fbb:hover{border-color:var(--g3);color:var(--g2)}
-.fbb.active{background:var(--g2);border-color:var(--g2);color:#fff}
-.fbdv{width:1px;height:16px;background:var(--bd);flex-shrink:0}
-.fbsl{font-size:11px;color:var(--mu);background:var(--bg);border:1px solid var(--bd);border-radius:6px;padding:2px 6px;font-family:inherit}
-.fbsl:focus{outline:none;border-color:var(--g3)}
-.arl{font-size:11px;color:var(--g2);font-weight:500;background:var(--light);padding:2px 9px;border-radius:11px;border:1px solid var(--bd);white-space:nowrap}
-.psel{font-size:12px;font-weight:600;color:var(--tx);background:var(--sf);border:1px solid var(--bd);border-radius:8px;padding:4px 10px;font-family:inherit;min-width:160px}
-.psel:focus{outline:none;border-color:var(--g3)}
+-- ============================================================
+-- 1. Daily Metrics (continuous)
+-- ============================================================
+SELECT
+    k.partner_grouping_legacy,
+    k.partner_short,
+    k.date_etz,
+    COUNT(*)                                                          AS loan_count,
+    SUM(TRY_CAST(k.gmv_usd AS DOUBLE))                                AS gmv_usd,
+    SUM(CASE WHEN k.is_subvented = TRUE  THEN TRY_CAST(k.gmv_usd AS DOUBLE) ELSE 0 END) AS subvented_gmv_usd,
+    SUM(CASE WHEN k.is_subvented = FALSE THEN TRY_CAST(k.gmv_usd AS DOUBLE) ELSE 0 END) AS interest_bearing_gmv_usd,
+    SUM(TRY_CAST(k.num_of_travelers_incl_minors AS DOUBLE))           AS passengers,
+    AVG(TRY_CAST(k.booking_window AS DOUBLE))                         AS avg_booking_window,
+    AVG(TRY_CAST(k.fico AS DOUBLE))                                   AS avg_fico
+FROM commercial_analytics.public.kpi_dashboard k
+WHERE lower(k.vertical) = 'air'
+  -- AND lower(k.partner_grouping_legacy) IN (
+  -- 'aeromexico', 'air canada', 'alaska airlines', 'allegiant air',
+  -- 'emirates', 'frontier airlines', 'united airlines', 'southwest airlines'
+  -- )
+  AND k.date_etz >= '2024-01-01'
+  AND k.date_etz < date_trunc('QUARTER', CURRENT_DATE)
+GROUP BY 1, 2, 3
+ORDER BY 1, 2, 3;
 
-/* LAYOUT */
-.shell{display:flex;height:calc(100vh - 90px)}
-.sb{width:182px;flex-shrink:0;background:var(--sf);border-right:1px solid var(--bd);padding:8px 0;position:sticky;top:90px;height:calc(100vh - 90px);overflow-y:auto}
-.ns{font-size:10px;font-weight:600;letter-spacing:.8px;text-transform:uppercase;color:var(--fa);padding:8px 13px 3px}
-.ni{display:flex;align-items:center;gap:6px;padding:6px 13px;cursor:pointer;font-size:12px;color:var(--mu);border-left:3px solid transparent;transition:all .12s;white-space:nowrap}
-.ni:hover{color:var(--tx);background:#F0F5EE}
-.ni.active{color:var(--g2);border-left-color:var(--g2);background:var(--light);font-weight:500}
-.nd{width:5px;height:5px;border-radius:50%;background:currentColor;flex-shrink:0}
+select * from databrickstors_canalytics_catalog.decisioning.applicant limit 10
 
-.main{flex:1;padding:16px 20px;overflow-y:auto}
-.pg{display:none}.pg.active{display:block}
-.pt{font-size:16px;font-weight:600;letter-spacing:-.3px;margin-bottom:2px}
-.ps{font-size:11px;color:var(--mu);margin-bottom:13px}
+-- ============================================================
+-- 2. Device Type (daily breakdown)
+-- ============================================================
+SELECT
+    k.partner_grouping_legacy, k.partner_short, k.date_etz, k.device_type,
+    COUNT(*) AS loan_count
+FROM commercial_analytics.public.kpi_dashboard k
+WHERE lower(k.vertical) = 'air'
+  -- AND lower(k.partner_grouping_legacy) IN (
+  -- 'aeromexico', 'air canada', 'alaska airlines', 'allegiant air',
+  -- 'emirates', 'frontier airlines', 'united airlines', 'southwest airlines'
+  -- )
+  AND k.date_etz >= '2024-01-01' AND k.date_etz < date_trunc('QUARTER', CURRENT_DATE)
+GROUP BY 1, 2, 3, 4
+ORDER BY 1, 2, 3, 4;
 
-.ptbar{display:flex;gap:5px;margin-bottom:11px;flex-wrap:wrap;align-items:center}
-.ptlbl{font-size:10px;color:var(--mu);margin-right:2px;text-transform:uppercase;letter-spacing:.4px}
-.ptt{padding:3px 11px;font-size:11px;font-weight:500;border:1px solid var(--bd);border-radius:13px;cursor:pointer;background:var(--sf);color:var(--mu);transition:all .12s}
-.ptt:hover{border-color:var(--g3);color:var(--g2)}
-.ptt.active{background:var(--g2);border-color:var(--g2);color:#fff}
 
-.card{background:var(--sf);border:1px solid var(--bd);border-radius:var(--r);padding:12px 15px;box-shadow:var(--sh)}
-.ct{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--mu);margin-bottom:8px}
-.g2{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-bottom:9px}
-.g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:9px;margin-bottom:9px}
-.cw{position:relative;width:100%}
+-- ============================================================
+-- 3. Fare Class (daily breakdown)
+-- ============================================================
+SELECT
+    k.partner_grouping_legacy, k.partner_short, k.date_etz,
+    TRIM(SPLIT(k.air_fare_classes, '|')[0]) AS fare_class,
+    COUNT(*) AS loan_count
+FROM commercial_analytics.public.kpi_dashboard k
+WHERE lower(k.vertical) = 'air'
+  -- AND lower(k.partner_grouping_legacy) IN (
+  -- 'aeromexico', 'air canada', 'alaska airlines', 'allegiant air',
+  -- 'emirates', 'frontier airlines', 'united airlines', 'southwest airlines'
+  -- )
+  AND k.date_etz >= '2024-01-01' AND k.date_etz < date_trunc('QUARTER', CURRENT_DATE)
+GROUP BY 1, 2, 3, 4
+ORDER BY 1, 2, 3, 4;
 
-.kr{display:grid;grid-template-columns:repeat(6,1fr);gap:7px;margin-bottom:11px}
-.kpi{background:var(--sf);border:1px solid var(--bd);border-radius:var(--r);padding:10px 12px;box-shadow:var(--sh)}
-.kpi.ak{border-left:3px solid var(--g2)}
-.kl{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--fa);margin-bottom:3px}
-.kv{font-size:19px;font-weight:600;letter-spacing:-.5px;line-height:1}
-.ks{font-size:10px;color:var(--fa);margin-top:3px}
 
-table.dt{width:100%;border-collapse:collapse;font-size:12px}
-table.dt th{text-align:left;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.4px;color:var(--fa);padding:4px 6px;border-bottom:1px solid var(--bd)}
-table.dt th.r{text-align:right}
-table.dt td{padding:5px 6px;border-bottom:1px solid var(--bl);color:var(--tx)}
-table.dt td.r{text-align:right;font-variant-numeric:tabular-nums}
-table.dt tr:last-child td{border-bottom:none}
-table.dt tr:hover td{background:#F5FAF3}
-.rb{display:inline-block;width:17px;height:17px;border-radius:4px;background:var(--bg);color:var(--mu);font-size:10px;font-weight:600;text-align:center;line-height:17px}
+-- ============================================================
+-- 4. Top 10 O&Ds
+-- ============================================================
+SELECT * FROM (
+    SELECT
+        partner_grouping_legacy, partner_short, air_od,
+        SUM(TRY_CAST(loan_count AS DOUBLE)) AS loan_count, SUM(TRY_CAST(gmv_usd AS DOUBLE)) AS gmv_usd,
+        ROW_NUMBER() OVER (PARTITION BY partner_grouping_legacy, partner_short ORDER BY SUM(loan_count) DESC) AS rank
+    FROM commercial_analytics.public.kpi_dashboard
+    WHERE lower(vertical) = 'air'
+      -- AND lower(partner_grouping_legacy) IN (
+      -- 'aeromexico', 'air canada', 'alaska airlines', 'allegiant air',
+      -- 'emirates', 'frontier airlines', 'united airlines', 'southwest airlines'
+      -- )
+      AND TRY_CAST(date_etz AS DATE) >= ADD_MONTHS(CURRENT_DATE, -12)
+      AND air_od IS NOT NULL
+    GROUP BY ALL
+)
+WHERE rank <= 10
+ORDER BY partner_grouping_legacy, partner_short, loan_count DESC;
 
-.bt{background:#E8F2E4;border-radius:3px;height:12px;overflow:hidden}
-.bf{height:100%;border-radius:3px}
 
-.ptog{padding:3px 10px;font-size:11px;border:1px solid var(--bd);border-radius:13px;cursor:pointer;background:none;color:var(--mu);transition:all .12s}
-.ptog.active{background:var(--bg);color:var(--tx);font-weight:500;border-color:#A5C89E}
-.ptogrow{display:flex;gap:5px;margin-bottom:9px;flex-wrap:wrap}
-.note{font-size:11px;color:var(--mu);background:#FFFDF5;border:1px solid #D5C97A;border-radius:6px;padding:6px 10px;margin-top:8px;line-height:1.5}
-</style>
-</head>
-<body>
+-- ============================================================
+-- 5. Top 10 Origins
+-- ============================================================
+SELECT * FROM (
+    SELECT
+        partner_grouping_legacy, partner_short, air_origin AS origin,
+        SUM(TRY_CAST(loan_count AS DOUBLE)) AS loan_count, SUM(TRY_CAST(gmv_usd AS DOUBLE)) AS gmv_usd,
+        ROW_NUMBER() OVER (PARTITION BY partner_grouping_legacy, partner_short ORDER BY SUM(loan_count) DESC) AS rn
+    FROM commercial_analytics.public.kpi_dashboard
+    WHERE lower(vertical) = 'air'
+      -- AND lower(partner_grouping_legacy) IN (
+      -- 'aeromexico', 'air canada', 'alaska airlines', 'allegiant air',
+      -- 'emirates', 'frontier airlines', 'united airlines', 'southwest airlines'
+      -- )
+      AND TRY_CAST(date_etz AS DATE) >= ADD_MONTHS(CURRENT_DATE, -12)
+      AND air_origin IS NOT NULL
+    GROUP BY ALL
+)
+WHERE rn <= 10
+ORDER BY partner_grouping_legacy, partner_short, loan_count DESC;
 
-<div id="load-screen" class="load-screen">
-  <div class="load-card">
-    <h2>Air Vertical QBR</h2>
-    <p>Load the data file (<code>air_qbr_data.json.gz</code>) to open the dashboard. Nothing is embedded in this HTML file - all data loads fresh each time you open it, so this file always reflects whatever data file you point it at.</p>
-    <button class="load-btn" onclick="document.getElementById('file-input').click()">Load Data File</button>
-    <input type="file" id="file-input" accept=".gz,.json" onchange="handleFileLoad(event)">
-    <div id="load-err" class="load-err"></div>
-  </div>
-</div>
 
-<div id="dashboard-root" style="display:none">
-<div class="hd">
-  <div class="hd-l"><div class="hbar"></div>
-    <div><h1>Air Vertical QBR</h1><div class="hd-s" id="hd-sub">&nbsp;</div></div>
-  </div>
-  <div class="hd-r" id="hd-r">&nbsp;</div>
-</div>
+-- ============================================================
+-- 6. Top 10 Destinations
+-- ============================================================
+SELECT * FROM (
+    SELECT
+        partner_grouping_legacy, partner_short, air_destination AS destination,
+        SUM(TRY_CAST(loan_count AS DOUBLE)) AS loan_count, SUM(TRY_CAST(gmv_usd AS DOUBLE)) AS gmv_usd,
+        ROW_NUMBER() OVER (PARTITION BY partner_grouping_legacy, partner_short ORDER BY SUM(loan_count) DESC) AS rn
+    FROM commercial_analytics.public.kpi_dashboard
+    WHERE lower(vertical) = 'air'
+      -- AND lower(partner_grouping_legacy) IN (
+      -- 'aeromexico', 'air canada', 'alaska airlines', 'allegiant air',
+      -- 'emirates', 'frontier airlines', 'united airlines', 'southwest airlines'
+      -- )
+      AND TRY_CAST(date_etz AS DATE) >= ADD_MONTHS(CURRENT_DATE, -12)
+      AND air_destination IS NOT NULL
+    GROUP BY ALL
+)
+WHERE rn <= 10
+ORDER BY partner_grouping_legacy, partner_short, loan_count DESC;
 
-<div class="fb">
-  <span class="fbl">Partner:</span>
-  <select class="psel" id="partner-select" onchange="onPartnerChange()"></select>
-  <div class="fbdv"></div>
-  <span class="fbl">View:</span>
-  <div class="fbg">
-    <button class="fbb" onclick="setGrain('day',this)">Day</button>
-    <button class="fbb active" onclick="setGrain('month',this)">Month</button>
-    <button class="fbb" onclick="setGrain('quarter',this)">Quarter</button>
-    <button class="fbb" onclick="setGrain('year',this)">Year</button>
-    <button class="fbb" onclick="setGrain('aggregated',this)">Aggregated</button>
-  </div>
-  <div class="fbdv"></div>
-  <span class="fbl">Quick:</span>
-  <div class="fbg" id="quick-btns"></div>
-  <div class="fbdv"></div>
-  <span class="fbl">From:</span>
-  <input type="date" class="fbsl" id="sel-from" onchange="setCR()">
-  <span class="fbl">To:</span>
-  <input type="date" class="fbsl" id="sel-to" onchange="setCR()">
-  <div class="fbdv"></div>
-  <span class="arl" id="arl">&nbsp;</span>
-</div>
 
-<div class="shell">
-  <div class="sb">
-    <div class="ns">Overview</div>
-    <div class="ni active" onclick="nav('summary',this)"><span class="nd"></span>Summary</div>
-    <div class="ns">Core KPIs</div>
-    <div class="ni" onclick="nav('loans',this)"><span class="nd"></span>Loans</div>
-    <div class="ni" onclick="nav('gmv',this)"><span class="nd"></span>GMV &amp; AOV</div>
-    <div class="ni" onclick="nav('sub',this)"><span class="nd"></span>Subvention</div>
-    <div class="ni" onclick="nav('bw',this)"><span class="nd"></span>Booking Window</div>
-    <div class="ni" onclick="nav('fico',this)"><span class="nd"></span>FICO</div>
-    <div class="ni" onclick="nav('pax',this)"><span class="nd"></span>Passengers</div>
-    <div class="ni" onclick="nav('term',this)"><span class="nd"></span>Loan Term</div>
-    <div class="ni" onclick="nav('device',this)"><span class="nd"></span>Device Type</div>
-    <div class="ni" onclick="nav('fare',this)"><span class="nd"></span>Fare Class</div>
-    <div class="ns">Customers</div>
-    <div class="ni" onclick="nav('uniq',this)"><span class="nd"></span>Unique Customers</div>
-    <div class="ni" onclick="nav('rep',this)"><span class="nd"></span>New vs Repeat</div>
-    <div class="ni" onclick="nav('gen',this)"><span class="nd"></span>Generation Mix</div>
-    <div class="ns">Routes</div>
-    <div class="ni" onclick="nav('od',this)"><span class="nd"></span>Top O&amp;Ds</div>
-    <div class="ni" onclick="nav('orig',this)"><span class="nd"></span>Top Origins</div>
-    <div class="ni" onclick="nav('dest',this)"><span class="nd"></span>Top Destinations</div>
-  </div>
+-- ============================================================
+-- 7. Loan Term (daily breakdown) - this is a large file and may need to be run seperate
+-- FIXED: "IN lower(...)" is invalid syntax - lower() takes one
+-- argument, not a list. Changed to lower(column) IN (lowercase
+-- list), matching queries 1-6's pattern.
+-- FLAG: l.term - please confirm this is the correct column name
+-- (previous versions used l.loan_term). Left as authored since
+-- you may know something about the schema I don't - but this is
+-- unverified and worth double-checking before trusting results.
+-- ============================================================
+SELECT
+    k.partner_grouping_legacy, k.partner_short, k.date_etz,
+    CAST(l.term AS STRING) AS loan_term,
+    COUNT(*) AS loan_count
+FROM commercial_analytics.public.kpi_dashboard k
+JOIN databrickstors_canalytics_catalog.core.loan_issued_bnpl l
+    ON CAST(l.loan_id AS STRING) = CAST(k.loan_id AS STRING)
+WHERE lower(k.vertical) = 'air'
+  -- AND lower(k.partner_grouping_legacy) IN (
+  -- 'aeromexico', 'air canada', 'alaska airlines', 'allegiant air',
+  -- 'emirates', 'frontier airlines', 'united airlines', 'southwest airlines'
+  -- )
+  AND k.date_etz >= '2024-01-01' AND k.date_etz < date_trunc('QUARTER', CURRENT_DATE)
+GROUP BY 1, 2, 3, 4
+ORDER BY 1, 2, 3, 4;
 
-  <div class="main">
-    <div id="page-summary" class="pg active"></div>
-    <div id="page-loans" class="pg"></div>
-    <div id="page-gmv" class="pg"></div>
-    <div id="page-sub" class="pg"></div>
-    <div id="page-bw" class="pg"></div>
-    <div id="page-fico" class="pg"></div>
-    <div id="page-pax" class="pg"></div>
-    <div id="page-term" class="pg"></div>
-    <div id="page-device" class="pg"></div>
-    <div id="page-fare" class="pg"></div>
-    <div id="page-uniq" class="pg"></div>
-    <div id="page-rep" class="pg"></div>
-    <div id="page-gen" class="pg"></div>
-    <div id="page-od" class="pg"></div>
-    <div id="page-orig" class="pg"></div>
-    <div id="page-dest" class="pg"></div>
-  </div>
-</div>
-</div>
 
-<script>
-// ── FILE LOADING ─────────────────────────────────────────────────────
-let DATA = null;       // parsed full dataset after decompression
-let PARTNERS = [];     // sorted list of distinct partner_grouping values
-let currentPartner = null;
-let channels = [];     // distinct partner_short values under currentPartner
-let DATES = [];        // ISO date strings spanning the loaded data's range
-let DATES_MIN_IDX = 0; // raw day-index corresponding to DATES[0], for O(1) position lookup
-let EPOCH = null;
+-- ============================================================
+-- 8. Total Unique Customers
+-- FIXED: joining pc via sdk_key_mapping_id alone was silently
+-- dropping every application from before ~mid-2025 (sdk_key_mapping_id
+-- appears to be NULL on older records) - added a fallback join via
+-- pc.upcode = a.uplift_upcode using two separate LEFT JOINs +
+-- COALESCE, so a row missing sdk_key_mapping_id can still match on
+-- upcode instead. Using two LEFT JOINs (not an OR in one join
+-- condition) specifically to avoid a fan-out if a row happened to
+-- match both keys to different pc rows.
+-- ============================================================
+SELECT 
+    COALESCE(pc1.partner_grouping, pc2.partner_grouping) AS partner_group,
+    COALESCE(pc1.partner_short, pc2.partner_short)       AS partner_short,
+    COALESCE(pc1.vertical, pc2.vertical)                 AS vertical,
+    COUNT(DISTINCT a.legal_entity_id) AS total_unique_customers,
+    MIN(a.application_create_date) AS partner_launch_date
+FROM databrickstors_canalytics_catalog.core.application_bnpl a
+JOIN databrickstors_canalytics_catalog.core.loan_issued_bnpl l
+    ON l.application_uuid = a.application_uuid
+LEFT JOIN commercial_analytics.public.partner_classification_aggregate pc1
+    ON pc1.sdk_key_id = a.sdk_key_mapping_id
+LEFT JOIN commercial_analytics.public.partner_classification_aggregate pc2
+    ON pc2.upcode = a.uplift_upcode
+WHERE lower(COALESCE(pc1.vertical, pc2.vertical)) = 'air'
+  -- AND lower(COALESCE(pc1.partner_grouping, pc2.partner_grouping)) IN (
+  -- 'aeromexico', 'air canada', 'alaska airlines', 'allegiant air',
+  -- 'emirates', 'frontier airlines', 'united airlines', 'southwest airlines'
+  -- )
+GROUP BY 1, 2, 3
+ORDER BY 1, 2;
 
-function handleFileLoad(event) {
-  const file = event.target.files[0];
-  if (!file) return;
-  const errEl = document.getElementById('load-err');
-  errEl.textContent = '';
-  const reader = new FileReader();
-  reader.onload = function(e) {
-    try {
-      const buf = new Uint8Array(e.target.result);
-      let text;
-      // Detect gzip magic bytes (1f 8b) vs plain JSON
-      if (buf[0] === 0x1f && buf[1] === 0x8b) {
-        text = pako.inflate(buf, { to: 'string' });
-      } else {
-        text = new TextDecoder('utf-8').decode(buf);
-      }
-      DATA = JSON.parse(text);
-      initDashboard();
-    } catch (err) {
-      errEl.textContent = 'Could not load this file: ' + err.message;
-      console.error(err);
-    }
-  };
-  reader.onerror = function() {
-    errEl.textContent = 'File read error.';
-  };
-  reader.readAsArrayBuffer(file);
-}
 
-function initDashboard() {
-  EPOCH = new Date(DATA.epoch + 'T00:00:00Z');
+-- ============================================================
+-- 9. New vs Repeat Customers (Within Partner)
+-- No structural issues found - uses core.application_bnpl and
+-- pc.sdk_key_id consistently. Left as authored.
+-- ============================================================
+WITH emirates_loans AS (
+    SELECT 
+        a.legal_entity_id, l.loan_id, TRY_CAST(k.gmv_usd AS DOUBLE) AS gmv_usd,
+        COALESCE(pc1.vertical, pc2.vertical) AS vertical,
+        DATE_TRUNC('quarter', from_utc_timestamp(l.origination_date, 'America/New_York')) AS loan_quarter,
+        COALESCE(pc1.partner_short, pc2.partner_short) AS partner_short,
+        COALESCE(pc1.partner_grouping, pc2.partner_grouping) AS partner_group,
+        MIN(DATE_TRUNC('quarter', from_utc_timestamp(l.origination_date, 'America/New_York'))) OVER (
+            PARTITION BY a.legal_entity_id
+        ) AS first_emirates_quarter
+    FROM databrickstors_canalytics_catalog.core.loan_issued_bnpl l
+    JOIN databrickstors_canalytics_catalog.core.application_bnpl a
+        ON a.application_uuid = l.application_uuid
+    LEFT JOIN commercial_analytics.public.partner_classification_aggregate pc1
+        ON pc1.sdk_key_id = a.sdk_key_mapping_id
+    LEFT JOIN commercial_analytics.public.partner_classification_aggregate pc2
+        ON pc2.upcode = a.uplift_upcode
+    JOIN commercial_analytics.public.kpi_dashboard k
+        ON k.loan_id = l.loan_id
+    WHERE lower(COALESCE(pc1.vertical, pc2.vertical)) = 'air'
+      -- AND lower(COALESCE(pc1.partner_grouping, pc2.partner_grouping)) IN (
+      -- 'aeromexico', 'air canada', 'alaska airlines', 'allegiant air',
+      -- 'emirates', 'frontier airlines', 'united airlines', 'southwest airlines'
+      -- )
+)
+SELECT
+    partner_group, partner_short, vertical,
+    CONCAT('Q', QUARTER(loan_quarter), '-', YEAR(loan_quarter)) AS quarter,
+    COUNT(DISTINCT CASE WHEN loan_quarter = first_emirates_quarter THEN legal_entity_id END) AS new_unique_customers,
+    COUNT(CASE WHEN loan_quarter = first_emirates_quarter THEN loan_id END) AS new_loan_count,
+    SUM(CASE WHEN loan_quarter = first_emirates_quarter THEN gmv_usd END) AS new_gmv_usd,
+    AVG(CASE WHEN loan_quarter = first_emirates_quarter THEN gmv_usd END) AS new_aov_usd,
+    COUNT(DISTINCT CASE WHEN loan_quarter > first_emirates_quarter THEN legal_entity_id END) AS repeat_unique_customers,
+    COUNT(CASE WHEN loan_quarter > first_emirates_quarter THEN loan_id END) AS repeat_loan_count,
+    SUM(CASE WHEN loan_quarter > first_emirates_quarter THEN gmv_usd END) AS repeat_gmv_usd,
+    AVG(CASE WHEN loan_quarter > first_emirates_quarter THEN gmv_usd END) AS repeat_aov_usd,
+    COUNT(DISTINCT legal_entity_id) AS total_unique_customers,
+    COUNT(loan_id) AS total_loan_count,
+    SUM(gmv_usd) AS total_gmv_usd,
+    AVG(gmv_usd) AS total_aov_usd,
+    ROUND(100.0 * COUNT(DISTINCT CASE WHEN loan_quarter = first_emirates_quarter THEN legal_entity_id END) / NULLIF(COUNT(DISTINCT legal_entity_id), 0), 1) AS new_customer_pct,
+    ROUND(100.0 * COUNT(DISTINCT CASE WHEN loan_quarter > first_emirates_quarter THEN legal_entity_id END) / NULLIF(COUNT(DISTINCT legal_entity_id), 0), 1) AS repeat_customer_pct
+FROM emirates_loans
+GROUP BY ALL
+ORDER BY 1, 2, 4;
 
-  // Build sorted partner list from daily_metrics (most complete source)
-  const pset = new Set();
-  DATA.daily_metrics.forEach(r => pset.add(r[0]));
-  PARTNERS = Array.from(pset).sort();
 
-  // Build global DATES range spanning min/max date_idx across daily_metrics
-  let minIdx = Infinity, maxIdx = -Infinity;
-  DATA.daily_metrics.forEach(r => {
-    const idx = r[2];
-    if (idx == null) return;
-    if (idx < minIdx) minIdx = idx;
-    if (idx > maxIdx) maxIdx = idx;
-  });
-  DATES_MIN_IDX = minIdx;
-  DATES = [];
-  for (let i = minIdx; i <= maxIdx; i++) {
-    const d = new Date(EPOCH.getTime() + i * 86400000);
-    DATES.push(d.toISOString().slice(0,10));
-  }
+-- ============================================================
+-- 10. Demographics (Age Generations / FICO)
+-- FIXED: "AND AND" double-keyword typo.
+-- ============================================================
+SELECT
+    COALESCE(pc1.partner_grouping, pc2.partner_grouping) AS partner_group,
+    COALESCE(pc1.partner_short, pc2.partner_short)       AS partner_short,
+    COALESCE(pc1.vertical, pc2.vertical)                 AS vertical,
+    CASE
+        WHEN YEAR(a.date_of_birth) BETWEEN 2013 AND 2025 THEN 'Alpha'
+        WHEN YEAR(a.date_of_birth) BETWEEN 1997 AND 2012 THEN 'Gen Z'
+        WHEN YEAR(a.date_of_birth) BETWEEN 1981 AND 1996 THEN 'Gen Y (Millennials)'
+        WHEN YEAR(a.date_of_birth) BETWEEN 1965 AND 1980 THEN 'Gen X'
+        WHEN YEAR(a.date_of_birth) BETWEEN 1955 AND 1964 THEN 'Baby Boomers II'
+        WHEN YEAR(a.date_of_birth) BETWEEN 1946 AND 1954 THEN 'Baby Boomers I'
+        WHEN YEAR(a.date_of_birth) BETWEEN 1928 AND 1945 THEN 'Post War'
+        WHEN YEAR(a.date_of_birth) BETWEEN 1922 AND 1927 THEN 'WWII'
+        ELSE 'Unknown'
+    END AS generation,
+    CASE
+        WHEN YEAR(from_utc_timestamp(l.origination_date, 'America/New_York')) = YEAR(CURRENT_DATE)
+            THEN CONCAT('YTD ', YEAR(from_utc_timestamp(l.origination_date, 'America/New_York')))
+        ELSE CONCAT('FY ', YEAR(from_utc_timestamp(l.origination_date, 'America/New_York')))
+    END AS period,
+    l.currency,
+    COUNT(DISTINCT a.legal_entity_id) AS unique_customers,
+    COUNT(l.loan_id) AS loan_count,
+    SUM(TRY_CAST(k.gmv_usd AS DOUBLE)) AS gmv,
+    AVG(TRY_CAST(k.gmv_usd AS DOUBLE)) AS aov,
+    ROUND(AVG((l.fico_range_low + l.fico_range_high) / 2.0), 0) AS avg_fico,
+    ROUND(AVG(l.stated_annual_income), 0) AS avg_household_income
+FROM databrickstors_canalytics_catalog.core.loan_issued_bnpl l
+JOIN databrickstors_canalytics_catalog.core.application_bnpl a
+    ON a.application_uuid = l.application_uuid
+LEFT JOIN commercial_analytics.public.partner_classification_aggregate pc1
+    ON pc1.sdk_key_id = a.sdk_key_mapping_id
+LEFT JOIN commercial_analytics.public.partner_classification_aggregate pc2
+    ON pc2.upcode = a.uplift_upcode
+JOIN commercial_analytics.public.kpi_dashboard k
+    ON k.loan_id = l.loan_id    
+WHERE lower(COALESCE(pc1.vertical, pc2.vertical)) = 'air'
+  -- AND lower(COALESCE(pc1.partner_grouping, pc2.partner_grouping)) IN (
+  -- 'aeromexico', 'air canada', 'alaska airlines', 'allegiant air',
+  -- 'emirates', 'frontier airlines', 'united airlines', 'southwest airlines'
+  -- )
+  AND YEAR(from_utc_timestamp(l.origination_date, 'America/New_York')) >= 2024
+GROUP BY 1, 2, 3, 4, 5, 6
+ORDER BY 1, 4, 3;
 
-  // Populate partner selector
-  const sel = document.getElementById('partner-select');
-  sel.innerHTML = PARTNERS.map(p => `<option value="${p}">${p}</option>`).join('');
-  currentPartner = PARTNERS[0];
-  sel.value = currentPartner;
 
-  // Populate quick-filter buttons based on actual data year range
-  buildQuickButtons();
-
-  // Set up date pickers
-  document.getElementById('sel-from').min = DATES[0];
-  document.getElementById('sel-from').max = DATES[DATES.length-1];
-  document.getElementById('sel-to').min = DATES[0];
-  document.getElementById('sel-to').max = DATES[DATES.length-1];
-  document.getElementById('sel-from').value = DATES[0];
-  document.getElementById('sel-to').value = DATES[DATES.length-1];
-  rfrom = 0; rto = DATES.length - 1;
-  filFrom = DATES[0]; filTo = DATES[DATES.length-1];
-
-  document.getElementById('load-screen').style.display = 'none';
-  document.getElementById('dashboard-root').style.display = 'block';
-  document.getElementById('hd-r').innerHTML = DATES[0] + ' – ' + DATES[DATES.length-1];
-
-  onPartnerChange();
-}
-
-function buildQuickButtons() {
-  const years = new Set();
-  DATES.forEach(d => years.add(d.slice(0,4)));
-  const sortedYears = Array.from(years).sort();
-  const container = document.getElementById('quick-btns');
-  let html = '';
-  sortedYears.forEach(y => {
-    html += `<button class="fbb" onclick="setQuickYear('${y}',this)">FY ${y}</button>`;
-  });
-  html += `<button class="fbb active" onclick="setQuickAll(this)">All time</button>`;
-  container.innerHTML = html;
-}
-
-// ── FILTER STATE ──────────────────────────────────────────────────────
-let grain = 'month', rfrom = 0, rto = 0;
-let filFrom = '', filTo = '';
-
-function setCR() {
-  const f = document.getElementById('sel-from').value;
-  const t = document.getElementById('sel-to').value;
-  if (f > t) { document.getElementById('sel-to').value = f; return; }
-  rfrom = DATES.indexOf(f); if (rfrom < 0) rfrom = 0;
-  rto = DATES.indexOf(t); if (rto < 0) rto = DATES.length - 1;
-  filFrom = f; filTo = t;
-  document.querySelectorAll('#quick-btns .fbb').forEach(b => b.classList.remove('active'));
-  updateLbl(); renderAll();
-}
-
-function setQuickYear(y, el) {
-  document.querySelectorAll('#quick-btns .fbb').forEach(b => b.classList.remove('active'));
-  el.classList.add('active');
-  const f = y + '-01-01', t = y + '-12-31';
-  document.getElementById('sel-from').value = f;
-  document.getElementById('sel-to').value = t;
-  rfrom = DATES.indexOf(f); if (rfrom < 0) rfrom = 0;
-  rto = DATES.indexOf(t); if (rto < 0) rto = DATES.length - 1;
-  filFrom = f; filTo = t;
-  updateLbl(); renderAll();
-}
-
-function setQuickAll(el) {
-  document.querySelectorAll('#quick-btns .fbb').forEach(b => b.classList.remove('active'));
-  el.classList.add('active');
-  document.getElementById('sel-from').value = DATES[0];
-  document.getElementById('sel-to').value = DATES[DATES.length-1];
-  rfrom = 0; rto = DATES.length - 1;
-  filFrom = '0000-01-01'; filTo = '9999-12-31'; // wide open for quarter-based sections (New vs Repeat)
-  updateLbl(); renderAll();
-}
-
-function setGrain(g, el) {
-  grain = g;
-  document.querySelectorAll('.fb .fbg')[0].querySelectorAll('.fbb').forEach(b => b.classList.remove('active'));
-  el.classList.add('active');
-  renderAll();
-}
-
-function updateLbl() {
-  const f = document.getElementById('sel-from').value;
-  const t = document.getElementById('sel-to').value;
-  document.getElementById('arl').textContent = f + ' \u2013 ' + t;
-}
-
-function onPartnerChange() {
-  currentPartner = document.getElementById('partner-select').value;
-  const chSet = new Set();
-  DATA.daily_metrics.forEach(r => { if (r[0] === currentPartner) chSet.add(r[1]); });
-  channels = Array.from(chSet).sort();
-  document.getElementById('hd-sub').textContent = currentPartner + ' \u00b7 ' + channels.length + ' channel' + (channels.length===1?'':'s');
-  renderAll();
-}
-
-function nav(page, el) {
-  document.querySelectorAll('.ni').forEach(n => n.classList.remove('active'));
-  el.classList.add('active');
-  document.querySelectorAll('.pg').forEach(p => p.classList.remove('active'));
-  document.getElementById('page-' + page).classList.add('active');
-}
-
-// ── PALETTE & FORMATTING ─────────────────────────────────────────────
-const PALETTE = ['#1C3F11','#265516','#387E23','#4FA030','#7DC05E','#AEDD94','#2A5D8F','#5A8FC7','#8FB8DB','#B23A3A','#D97757'];
-function colorFor(i) { return PALETTE[i % PALETTE.length]; }
-
-function fm(v) {
-  if (v == null || isNaN(v)) return '$0';
-  return '$' + Math.round(v).toLocaleString();
-}
-function fmS(v) {
-  if (v == null || isNaN(v)) return '$0';
-  const a = Math.abs(v);
-  if (a >= 1e6) return '$' + (v/1e6).toFixed(1) + 'M';
-  if (a >= 1e3) return '$' + (v/1e3).toFixed(0) + 'K';
-  return '$' + Math.round(v);
-}
-function hexToRgba(hex, alpha) {
-  const h = hex.replace('#','');
-  const r = parseInt(h.substring(0,2),16), g = parseInt(h.substring(2,4),16), b = parseInt(h.substring(4,6),16);
-  return `rgba(${r},${g},${b},${alpha})`;
-}
-function legendLabels() {
-  return {font:{size:10},boxWidth:10,padding:7,usePointStyle:true,
-    generateLabels: chart => chart.data.datasets.map((ds,i)=>({
-      text: ds.label, fillStyle: ds.borderColor, strokeStyle: ds.borderColor,
-      lineWidth: 0, hidden: !chart.isDatasetVisible(i), datasetIndex: i, pointStyle: 'circle'
-    }))};
-}
-
-// ── GENERIC AGGREGATION ENGINE ───────────────────────────────────────
-function bucketLabel(dateIdx, g) {
-  const d = new Date(EPOCH.getTime() + dateIdx*86400000);
-  const y = d.getUTCFullYear(), mo = d.getUTCMonth()+1;
-  if (g==='day') return d.toISOString().slice(0,10);
-  if (g==='month') return `${y}-${String(mo).padStart(2,'0')}`;
-  if (g==='quarter') return `Q${Math.ceil(mo/3)}-${y}`;
-  if (g==='year') return String(y);
-  return 'All';
-}
-function bucketSort(a, b) {
-  // day/month sort lexically fine; quarter needs numeric year+quarter sort
-  if (a.startsWith('Q') && b.startsWith('Q')) {
-    const [qa, ya] = a.slice(1).split('-'); const [qb, yb] = b.slice(1).split('-');
-    return ya !== yb ? ya - yb : qa - qb;
-  }
-  return a < b ? -1 : a > b ? 1 : 0;
-}
-
-// Filters daily_metrics to current partner + selected date range, returns
-// { channel: { bucketLabel: {loans, gmv, sub, int, pax, bwSum, bwCount, ficoSum, ficoCount} } }
-function aggregateDailyMetrics() {
-  const result = {};
-  channels.forEach(c => result[c] = {});
-  const fromIdx = DATES.indexOf(filFrom) >= 0 ? DATES.indexOf(filFrom) : rfrom;
-  const toIdx = DATES.indexOf(filTo) >= 0 ? DATES.indexOf(filTo) : rto;
-  const minDay = EPOCH ? Math.min.apply(null, DATES.map((_,i)=>i)) : 0;
-
-  DATA.daily_metrics.forEach(row => {
-    const [partner, channel, dateIdx, loans, gmv, sub, intr, pax, bw, fico] = row;
-    if (partner !== currentPartner || dateIdx == null) return;
-    const dPos = dateIdx - DATES_MIN_IDX;
-    if (dPos < rfrom || dPos > rto) return;
-    const label = bucketLabel(dateIdx, grain);
-    if (!result[channel]) result[channel] = {};
-    if (!result[channel][label]) result[channel][label] = {loans:0,gmv:0,sub:0,int:0,pax:0,bwSum:0,bwCount:0,ficoSum:0,ficoCount:0};
-    const b = result[channel][label];
-    b.loans += (loans||0); b.gmv += (gmv||0); b.sub += (sub||0); b.int += (intr||0); b.pax += (pax||0);
-    if (bw != null && loans) { b.bwSum += bw*loans; b.bwCount += loans; }
-    if (fico != null && loans) { b.ficoSum += fico*loans; b.ficoCount += loans; }
-  });
-  return result;
-}
-
-function allBucketLabels(aggResult) {
-  const s = new Set();
-  channels.forEach(c => { if (aggResult[c]) Object.keys(aggResult[c]).forEach(l => s.add(l)); });
-  return Array.from(s).sort(bucketSort);
-}
-
-let charts = {};
-function mk(id, config) {
-  const canvas = document.getElementById(id);
-  if (!canvas) return;
-  if (charts[id]) charts[id].destroy();
-  charts[id] = new Chart(canvas, config);
-}
-function lineDs(color, values, dash=false, fill=false) {
-  return { data: values, borderColor: color, backgroundColor: fill ? hexToRgba(color, 0.08) : color,
-    borderWidth: 2, tension: 0.3, pointRadius: grain==='day'?0:2, fill,
-    borderDash: dash ? [5,4] : [] };
-}
-const xO = { grid: { display: false }, ticks: { font: { size: 10 }, maxRotation: 0, autoSkip: true } };
-const yO = { grid: { color: 'rgba(0,0,0,0.05)' }, ticks: { font: { size: 10 } } };
-
-// ── SUMMARY / OVERVIEW ────────────────────────────────────────────────
-function renderSummary() {
-  const agg = aggregateDailyMetrics();
-  const labels = allBucketLabels(agg);
-  let totalLoans=0, totalGMV=0;
-  channels.forEach(c => { Object.values(agg[c]||{}).forEach(b => { totalLoans+=b.loans; totalGMV+=b.gmv; }); });
-
-  const el = document.getElementById('page-summary');
-  el.innerHTML = `
-    <div class="pt">Overview</div><div class="ps">${currentPartner} \u00b7 ${channels.length} channel(s)</div>
-    <div class="kr" style="grid-template-columns:repeat(3,1fr)">
-      <div class="kpi ak"><div class="kl">Total Loans</div><div class="kv">${Math.round(totalLoans).toLocaleString()}</div></div>
-      <div class="kpi ak"><div class="kl">Total GMV</div><div class="kv">${fmS(totalGMV)}</div></div>
-      <div class="kpi"><div class="kl">Channels</div><div class="kv">${channels.length}</div></div>
-    </div>
-    <div class="card"><div class="ct">GMV by Period</div><div class="cw" style="height:220px"><canvas id="summaryChart"></canvas></div></div>
-  `;
-  const datasets = channels.map((c,i) => ({
-    label: c,
-    ...lineDs(colorFor(i), labels.map(l => (agg[c]&&agg[c][l]) ? agg[c][l].gmv : 0), i>0)
-  }));
-  mk('summaryChart', {type:'line', data:{labels, datasets}, options:{responsive:true,maintainAspectRatio:false,
-    plugins:{legend:{display:true,position:'top',labels:legendLabels()}},
-    scales:{x:xO, y:{...yO, ticks:{...yO.ticks, callback:v=>fmS(v)}}}}});
-}
-
-// ── LOANS ─────────────────────────────────────────────────────────────
-function renderLoans() {
-  const agg = aggregateDailyMetrics();
-  const labels = allBucketLabels(agg);
-  const el = document.getElementById('page-loans');
-  el.innerHTML = `
-    <div class="pt">Loans</div><div class="ps">by channel</div>
-    <div class="card"><div class="ct">Loan Count</div><div class="cw" style="height:240px"><canvas id="loansChart"></canvas></div></div>
-  `;
-  const datasets = channels.map((c,i) => ({
-    label: c,
-    ...lineDs(colorFor(i), labels.map(l => (agg[c]&&agg[c][l]) ? agg[c][l].loans : 0), i>0)
-  }));
-  mk('loansChart', {type:'line', data:{labels, datasets}, options:{responsive:true,maintainAspectRatio:false,
-    plugins:{legend:{display:true,position:'top',labels:legendLabels()}}, scales:{x:xO,y:yO}}});
-}
-
-// ── GMV & AOV ─────────────────────────────────────────────────────────
-function renderGMV() {
-  const agg = aggregateDailyMetrics();
-  const labels = allBucketLabels(agg);
-  const el = document.getElementById('page-gmv');
-  el.innerHTML = `
-    <div class="pt">GMV &amp; AOV</div><div class="ps">by channel \u00b7 All figures in USD</div>
-    <div class="g2">
-      <div class="card"><div class="ct">GMV</div><div class="cw" style="height:210px"><canvas id="gmvChart"></canvas></div></div>
-      <div class="card"><div class="ct">AOV</div><div class="cw" style="height:210px"><canvas id="aovChart"></canvas></div></div>
-    </div>
-  `;
-  const gmvDs = channels.map((c,i) => ({
-    label: c,
-    ...lineDs(colorFor(i), labels.map(l => (agg[c]&&agg[c][l]) ? agg[c][l].gmv : 0), i>0)
-  }));
-  const aovDs = channels.map((c,i) => ({
-    label: c,
-    ...lineDs(colorFor(i), labels.map(l => {
-      const b = agg[c] && agg[c][l];
-      return b && b.loans ? b.gmv/b.loans : null;
-    }), i>0)
-  }));
-  mk('gmvChart', {type:'line', data:{labels, datasets:gmvDs}, options:{responsive:true,maintainAspectRatio:false,
-    plugins:{legend:{display:true,position:'top',labels:legendLabels()}}, scales:{x:xO,y:{...yO,ticks:{...yO.ticks,callback:v=>fmS(v)}}}}});
-  mk('aovChart', {type:'line', data:{labels, datasets:aovDs}, options:{responsive:true,maintainAspectRatio:false,
-    plugins:{legend:{display:true,position:'top',labels:legendLabels()}}, scales:{x:xO,y:{...yO,ticks:{...yO.ticks,callback:v=>fmS(v)}}}}});
-}
-
-// ── SUBVENTION ────────────────────────────────────────────────────────
-function renderSub() {
-  const agg = aggregateDailyMetrics();
-  const labels = allBucketLabels(agg);
-  const el = document.getElementById('page-sub');
-  el.innerHTML = `
-    <div class="pt">Subvention</div><div class="ps">Subvented vs interest-bearing GMV, by channel</div>
-    <div id="sub-charts"></div>
-  `;
-  const container = document.getElementById('sub-charts');
-  container.innerHTML = channels.map((c,i) => `
-    <div class="card" style="margin-bottom:9px"><div class="ct">${c}</div><div class="cw" style="height:180px"><canvas id="subChart${i}"></canvas></div></div>
-  `).join('');
-  channels.forEach((c,i) => {
-    mk('subChart'+i, {type:'bar', data:{labels, datasets:[
-      {label:'Subvented', data:labels.map(l=>(agg[c]&&agg[c][l])?agg[c][l].sub:0), backgroundColor:colorFor(0), borderRadius:2},
-      {label:'Interest-bearing', data:labels.map(l=>(agg[c]&&agg[c][l])?agg[c][l].int:0), backgroundColor:colorFor(3), borderRadius:2}
-    ]}, options:{responsive:true,maintainAspectRatio:false,
-      plugins:{legend:{display:true,position:'top',labels:{font:{size:10},boxWidth:10}}},
-      scales:{x:{...xO,stacked:true},y:{...yO,stacked:true,ticks:{...yO.ticks,callback:v=>fmS(v)}}}}});
-  });
-}
-
-// ── BOOKING WINDOW ────────────────────────────────────────────────────
-function renderBW() {
-  const agg = aggregateDailyMetrics();
-  const labels = allBucketLabels(agg);
-  const el = document.getElementById('page-bw');
-  el.innerHTML = `
-    <div class="pt">Booking Window</div><div class="ps">Average days between booking and departure, by channel</div>
-    <div class="card"><div class="ct">Avg Booking Window (days)</div><div class="cw" style="height:220px"><canvas id="bwChart"></canvas></div></div>
-  `;
-  const datasets = channels.map((c,i) => ({
-    label: c,
-    ...lineDs(colorFor(i), labels.map(l => {
-      const b = agg[c] && agg[c][l];
-      return b && b.bwCount ? b.bwSum/b.bwCount : null;
-    }), i>0)
-  }));
-  mk('bwChart', {type:'line', data:{labels, datasets}, options:{responsive:true,maintainAspectRatio:false,
-    plugins:{legend:{display:true,position:'top',labels:legendLabels()}}, scales:{x:xO,y:yO}}});
-}
-
-// ── FICO ──────────────────────────────────────────────────────────────
-function renderFico() {
-  const agg = aggregateDailyMetrics();
-  const labels = allBucketLabels(agg);
-  const el = document.getElementById('page-fico');
-  el.innerHTML = `
-    <div class="pt">FICO</div><div class="ps">Average FICO score, by channel</div>
-    <div class="card"><div class="ct">Avg FICO</div><div class="cw" style="height:220px"><canvas id="ficoChart"></canvas></div></div>
-  `;
-  const datasets = channels.map((c,i) => ({
-    label: c,
-    ...lineDs(colorFor(i), labels.map(l => {
-      const b = agg[c] && agg[c][l];
-      return b && b.ficoCount ? b.ficoSum/b.ficoCount : null;
-    }), i>0)
-  }));
-  mk('ficoChart', {type:'line', data:{labels, datasets}, options:{responsive:true,maintainAspectRatio:false,
-    plugins:{legend:{display:true,position:'top',labels:legendLabels()}}, scales:{x:xO,y:{...yO,min:500,max:850}}}});
-}
-
-// ── PASSENGERS ────────────────────────────────────────────────────────
-function renderPax() {
-  const agg = aggregateDailyMetrics();
-  const labels = allBucketLabels(agg);
-  const el = document.getElementById('page-pax');
-  el.innerHTML = `
-    <div class="pt">Passengers</div><div class="ps">Total travelers (incl. minors), by channel</div>
-    <div class="card"><div class="ct">Passengers</div><div class="cw" style="height:220px"><canvas id="paxChart"></canvas></div></div>
-  `;
-  const datasets = channels.map((c,i) => ({
-    label: c,
-    ...lineDs(colorFor(i), labels.map(l => (agg[c]&&agg[c][l]) ? agg[c][l].pax : 0), i>0)
-  }));
-  mk('paxChart', {type:'line', data:{labels, datasets}, options:{responsive:true,maintainAspectRatio:false,
-    plugins:{legend:{display:true,position:'top',labels:legendLabels()}}, scales:{x:xO,y:yO}}});
-}
-
-// ── CATEGORY BREAKDOWNS (Term / Device / Fare) ───────────────────────
-function cleanCatLabel(v) {
-  const s = v == null ? 'Unknown' : String(v);
-  return s.match(/^\d+\.0$/) ? s.slice(0, -2) : s;
-}
-function aggregateCategory(dataset, catFieldIdx) {
-  // dataset rows: [partner, channel, date_idx, category, loan_count]
-  const result = {}; // channel -> category -> count
-  const allCats = new Set();
-  dataset.forEach(row => {
-    const partner = row[0], channel = row[1], dateIdx = row[2], cat = row[3], count = row[4];
-    if (partner !== currentPartner || dateIdx == null) return;
-    const dPos = dateIdx - DATES_MIN_IDX;
-    if (dPos < rfrom || dPos > rto) return;
-    if (!result[channel]) result[channel] = {};
-    const c = cleanCatLabel(cat);
-    result[channel][c] = (result[channel][c]||0) + (count||0);
-    allCats.add(c);
-  });
-  return { result, categories: Array.from(allCats).sort() };
-}
-
-function renderCategoryPage(pageId, dataset, title, sub) {
-  const { result, categories } = aggregateCategory(dataset);
-  const el = document.getElementById(pageId);
-  el.innerHTML = `
-    <div class="pt">${title}</div><div class="ps">${sub}</div>
-    <div id="${pageId}-charts"></div>
-  `;
-  const container = document.getElementById(pageId+'-charts');
-  container.innerHTML = channels.map((c,i) => `
-    <div class="card" style="margin-bottom:9px"><div class="ct">${c}</div><div class="cw" style="height:170px"><canvas id="${pageId}-c${i}"></canvas></div></div>
-  `).join('');
-  channels.forEach((c,i) => {
-    const vals = categories.map(cat => (result[c]&&result[c][cat]) || 0);
-    mk(pageId+'-c'+i, {type:'bar', data:{labels:categories, datasets:[{data:vals, backgroundColor:colorFor(i), borderRadius:3}]},
-      options:{responsive:true,maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{x:xO,y:yO}}});
-  });
-}
-
-function renderTerm() { renderCategoryPage('page-term', DATA.loan_term_daily, 'Loan Term', 'Distribution of loan terms (months), by channel'); }
-function renderDevice() { renderCategoryPage('page-device', DATA.device_type_daily, 'Device Type', 'Loan distribution by device, by channel'); }
-function renderFare() { renderCategoryPage('page-fare', DATA.fare_class_daily, 'Fare Class', 'Distribution of fare class, by channel'); }
-
-// ── UNIQUE CUSTOMERS ──────────────────────────────────────────────────
-// All-time metric, intentionally NOT affected by the date filter -
-// same reasoning as the Emirates-only dashboard: distinct-customer
-// counts can't be sliced across time periods without double-counting.
-function renderUniq() {
-  const rows = DATA.total_unique_customers.filter(r => r[0] === currentPartner);
-  const el = document.getElementById('page-uniq');
-  const total = rows.reduce((a,r)=>a+(r[2]||0),0);
-  el.innerHTML = `
-    <div class="pt">Unique Customers</div><div class="ps">All-time, by channel</div>
-    <div class="note">This section always shows the true all-time total, regardless of the date filter above - distinct-customer counts can't be correctly sliced across time periods without double-counting repeat customers.</div>
-    <div class="kr" style="grid-template-columns:repeat(${Math.min(channels.length+1,6)},1fr);margin-top:9px">
-      ${rows.map(r => `<div class="kpi ak"><div class="kl">${r[1]}</div><div class="kv">${Math.round(r[2]).toLocaleString()}</div><div class="ks">Launch: ${(r[3]||'').slice(0,10)}</div></div>`).join('')}
-      <div class="kpi"><div class="kl">Combined</div><div class="kv">${Math.round(total).toLocaleString()}</div></div>
-    </div>
-    <div class="card"><div class="ct">Unique customers by channel</div><div class="cw" style="height:180px"><canvas id="uniqChart"></canvas></div></div>
-  `;
-  mk('uniqChart', {type:'bar', data:{labels:rows.map(r=>r[1]), datasets:[{data:rows.map(r=>r[2]), backgroundColor:rows.map((_,i)=>colorFor(i)), borderRadius:5, barPercentage:.5}]},
-    options:{responsive:true,maintainAspectRatio:false,indexAxis:'y',plugins:{legend:{display:false}},
-      scales:{x:{ticks:{font:{size:10}}},y:{ticks:{font:{size:11}},grid:{display:false}}}}});
-}
-
-// ── NEW VS REPEAT ─────────────────────────────────────────────────────
-function quarterBounds(q) {
-  const [qq,yy] = q.split('-'); const qn = +qq.slice(1); const y = +yy;
-  const startMonth = (qn-1)*3+1;
-  const start = `${y}-${String(startMonth).padStart(2,'0')}-01`;
-  const endMonth = startMonth+2;
-  const lastDay = new Date(y, endMonth, 0).getDate();
-  const end = `${y}-${String(endMonth).padStart(2,'0')}-${String(lastDay).padStart(2,'0')}`;
-  return [start, end];
-}
-let repChannel = null;
-function setRepChannel(c, el) {
-  repChannel = c;
-  document.querySelectorAll('#page-rep .ptt').forEach(b=>b.classList.remove('active'));
-  el.classList.add('active');
-  renderRep();
-}
-function renderRep() {
-  const rows = DATA.new_vs_repeat.filter(r => r[0] === currentPartner);
-  if (!repChannel || !channels.includes(repChannel)) repChannel = channels[0];
-  const el = document.getElementById('page-rep');
-  el.innerHTML = `
-    <div class="pt">New vs Repeat Customers</div><div class="ps">New = first loan with this partner that quarter \u00b7 Repeat = prior loan in an earlier quarter</div>
-    <div class="note">Responds to the date filter above by quarter overlap. History may extend earlier than other sections' daily data.</div>
-    <div class="ptbar" style="margin-top:9px"><span class="ptlbl">Channel:</span>
-      ${channels.map((c,i)=>`<button class="ptt${c===repChannel?' active':''}" onclick="setRepChannel('${c}',this)">${c}</button>`).join('')}
-    </div>
-    <div class="card" style="margin-bottom:9px"><div class="ct">New vs Repeat \u2014 Quarterly</div><div class="cw" style="height:210px"><canvas id="repChart"></canvas></div></div>
-    <div class="card"><div class="ct">Repeat % trend</div><div class="cw" style="height:145px"><canvas id="repPct"></canvas></div></div>
-  `;
-  const data = rows.filter(r => r[1] === repChannel).filter(r => {
-    const [qs,qe] = quarterBounds(r[2]);
-    return qe >= filFrom && qs <= filTo;
-  }).sort((a,b)=>bucketSort(a[2],b[2]));
-  const labels = data.map(r=>r[2]);
-  const newU = data.map(r=>r[3]||0);
-  const repU = data.map(r=>r[7]||0);
-  const repPct = data.map(r=>r[15]||0);
-  mk('repChart', {type:'bar', data:{labels, datasets:[
-    {label:'New', data:newU, backgroundColor:colorFor(0), borderRadius:2},
-    {label:'Repeat', data:repU, backgroundColor:colorFor(4), borderRadius:2}
-  ]}, options:{responsive:true,maintainAspectRatio:false,
-    plugins:{legend:{display:true,position:'top',labels:{font:{size:10},boxWidth:10}}},
-    scales:{x:{...xO,stacked:true},y:{...yO,stacked:true}}}});
-  mk('repPct', {type:'line', data:{labels, datasets:[{data:repPct,borderColor:colorFor(0),borderWidth:2,tension:.3,pointRadius:3,fill:false}]},
-    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},
-      scales:{x:xO,y:{...yO,min:0,max:100,ticks:{...yO.ticks,callback:v=>v+'%'}}}}});
-}
-
-// ── GENERATION MIX ────────────────────────────────────────────────────
-let genPeriod = null;
-function setGenPeriod(p, el) {
-  genPeriod = p;
-  document.querySelectorAll('#page-gen .ptog').forEach(b=>b.classList.remove('active'));
-  el.classList.add('active');
-  renderGen();
-}
-function renderGen() {
-  const rows = DATA.demographics.filter(r => r[0] === currentPartner);
-  const periods = Array.from(new Set(rows.map(r=>r[3]))).sort();
-  if (!genPeriod || !periods.includes(genPeriod)) genPeriod = periods[periods.length-1];
-  const el = document.getElementById('page-gen');
-  el.innerHTML = `
-    <div class="pt">Generation Mix</div><div class="ps">By unique customers, by channel</div>
-    <div class="note">Uses its own period toggle below, not the main date filter above.</div>
-    <div class="ptogrow" style="margin-top:9px">
-      ${periods.map(p=>`<button class="ptog${p===genPeriod?' active':''}" onclick="setGenPeriod('${p}',this)">${p}</button>`).join('')}
-    </div>
-    <div id="gen-charts"></div>
-  `;
-  const container = document.getElementById('gen-charts');
-  container.innerHTML = channels.map((c,i) => `
-    <div class="card" style="margin-bottom:9px"><div class="ct">${c}</div><div class="cw" style="height:170px"><canvas id="gen-c${i}"></canvas></div></div>
-  `).join('');
-  channels.forEach((c,i) => {
-    const cRows = rows.filter(r => r[1]===c && r[3]===genPeriod);
-    const byGen = {};
-    cRows.forEach(r => { byGen[r[2]] = (byGen[r[2]]||0) + (r[5]||0); });
-    const gens = Object.keys(byGen).sort();
-    mk('gen-c'+i, {type:'bar', data:{labels:gens, datasets:[{data:gens.map(g=>byGen[g]), backgroundColor:colorFor(i), borderRadius:3}]},
-      options:{responsive:true,maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{x:xO,y:yO}}});
-  });
-}
-
-// ── ROUTES ────────────────────────────────────────────────────────────
-function renderRouteTable(pageId, dataset, title, keyLabel) {
-  const rows = dataset.filter(r => r[0] === currentPartner);
-  const el = document.getElementById(pageId);
-  el.innerHTML = `
-    <div class="pt">${title}</div><div class="ps">Top 10 by loan count, by channel \u00b7 trailing 12 months \u00b7 not affected by date filter</div>
-    <div id="${pageId}-tables"></div>
-  `;
-  const container = document.getElementById(pageId+'-tables');
-  container.innerHTML = channels.map(c => `
-    <div class="card" style="margin-bottom:9px"><div class="ct">${c}</div><table class="dt" id="${pageId}-t-${c.replace(/[^a-zA-Z0-9]/g,'')}"></table></div>
-  `).join('');
-  channels.forEach(c => {
-    const cRows = rows.filter(r => r[1]===c).sort((a,b)=>(b[3]||0)-(a[3]||0)).slice(0,10);
-    const tbl = document.getElementById(pageId+'-t-'+c.replace(/[^a-zA-Z0-9]/g,''));
-    tbl.innerHTML = `<thead><tr><th>#</th><th>${keyLabel}</th><th class="r">Loans</th><th class="r">GMV</th></tr></thead>
-      <tbody>${cRows.map((r,i)=>`<tr><td><span class="rb">${i+1}</span></td><td>${r[2]}</td><td class="r">${Math.round(r[3]).toLocaleString()}</td><td class="r">${fmS(r[4])}</td></tr>`).join('')}</tbody>`;
-  });
-}
-function renderOD() { renderRouteTable('page-od', DATA.top_10_ods, 'Top 10 O&Ds', 'O&D'); }
-function renderOrig() { renderRouteTable('page-orig', DATA.top_10_origins, 'Top 10 Origins', 'Origin'); }
-function renderDest() { renderRouteTable('page-dest', DATA.top_10_destinations, 'Top 10 Destinations', 'Destination'); }
-
-// ── RENDER ALL ────────────────────────────────────────────────────────
-function renderAll() {
-  renderSummary(); renderLoans(); renderGMV(); renderSub(); renderBW(); renderFico(); renderPax();
-  renderTerm(); renderDevice(); renderFare();
-  renderUniq(); renderRep(); renderGen();
-  renderOD(); renderOrig(); renderDest();
-}
-</script>
-</body>
-</html>
+-- ============================================================
+-- 11. Trip Duration (daily bucket breakdown)
+-- Buckets each individual loan's actual trip length (departure to
+-- arrival) FIRST, then counts loans per bucket per day - this
+-- preserves the true distribution, unlike averaging duration per
+-- day and bucketing the averages (which was shown to distort short
+-- and long-tail trips almost out of existence).
+-- ============================================================
+SELECT
+    partner_grouping_legacy,
+    partner_short,
+    date_etz,
+    CASE
+        WHEN trip_days < 7  THEN '<7d'
+        WHEN trip_days < 15 THEN '7-14d'
+        WHEN trip_days < 22 THEN '15-21d'
+        WHEN trip_days < 31 THEN '22-30d'
+        WHEN trip_days < 61 THEN '31-60d'
+        ELSE '60d+'
+    END AS trip_duration_bucket,
+    COUNT(*) AS loan_count
+FROM (
+    SELECT
+        k.partner_grouping_legacy,
+        k.partner_short,
+        k.date_etz,
+        DATEDIFF(TRY_CAST(k.air_arrival_date AS DATE), TRY_CAST(k.air_departure_date AS DATE)) AS trip_days
+    FROM commercial_analytics.public.kpi_dashboard k
+    WHERE lower(k.vertical) = 'air'
+      -- AND lower(k.partner_grouping_legacy) IN (
+      -- 'aeromexico', 'air canada', 'alaska airlines', 'allegiant air',
+      -- 'emirates', 'frontier airlines', 'united airlines', 'southwest airlines'
+      -- )
+      AND k.date_etz >= '2024-01-01'
+      AND k.date_etz < date_trunc('QUARTER', CURRENT_DATE)
+)
+WHERE trip_days IS NOT NULL AND trip_days >= 0
+GROUP BY 1, 2, 3, 4
+ORDER BY 1, 2, 3, 4;
