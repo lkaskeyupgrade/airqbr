@@ -1,5 +1,5 @@
 -- ============================================================
--- Air Vertical QBR: CONSOLIDATED, CURRENT QUERY SET
+-- Air Vertical QBR: CONSOLIDATED, CURRENT QUERY SET (with CAD)
 -- Vertical/partner filters use lower(...) on both sides for
 -- robustness against any casing inconsistency (not just the
 -- specific 'AIR' vs 'Air' issue found earlier).
@@ -7,30 +7,22 @@
 -- Demographics) use partner_classification_aggregate (pc),
 -- joined two ways via LEFT JOIN + COALESCE: first
 -- pc1.sdk_key_id = a.sdk_key_mapping_id, falling back to
--- pc2.upcode = a.uplift_upcode when the first doesn't match -
--- sdk_key_mapping_id alone was found to be NULL on most
--- pre-2025 records, silently dropping over 2 years of history
--- with a plain INNER JOIN on it alone.
--- Queries 1-7 (which only touch kpi_dashboard, no
--- application_bnpl/loan_issued_bnpl-based partner join) use
--- k.partner_grouping_legacy/k.partner_short/k.vertical directly.
+-- pc2.upcode = a.uplift_upcode when the first doesn't match.
+-- Queries 1-7 use k.partner_grouping_legacy/k.partner_short/
+-- k.vertical directly.
 --
--- DATE RANGE: the upper bound on queries 1, 2, 3, and 7 is now
--- dynamic - date_etz < date_trunc('QUARTER', CURRENT_DATE) -
--- which always resolves to the start of the CURRENT (in-progress)
--- quarter, so the data always includes everything through the
--- end of the most recently COMPLETED quarter with no manual edit
--- needed each cycle. Run today (mid Q3 2026) this evaluates to
--- '2026-07-01'; run in October (Q4) it becomes '2026-10-01', etc.
--- The LOWER bound (date_etz >= '2024-01-01') is intentionally
--- still a fixed, hardcoded date - it was NOT made dynamic, since
--- there's no "always X years back" requirement given yet. Extend
--- this manually if the historical start date ever needs to move.
+-- CAD ADDED: every gmv_usd-style column now has a gmv_cad
+-- counterpart, sourced from k.gmv_cad (raw, pre-computed local-
+-- currency amount, same source table as gmv_usd - no FX
+-- conversion happens in these queries or in the dashboard).
 -- ============================================================
 
 
 -- ============================================================
 -- 1. Daily Metrics (continuous)
+-- FIXED: removed a duplicate subvented_gmv_cad column (was
+-- defined twice - a real syntax error), added the missing
+-- unconditional gmv_cad total (gmv_usd had one, gmv_cad didn't).
 -- ============================================================
 SELECT
     k.partner_grouping_legacy,
@@ -38,8 +30,11 @@ SELECT
     k.date_etz,
     COUNT(*)                                                          AS loan_count,
     SUM(TRY_CAST(k.gmv_usd AS DOUBLE))                                AS gmv_usd,
+    SUM(TRY_CAST(k.gmv_cad AS DOUBLE))                                AS gmv_cad,
     SUM(CASE WHEN k.is_subvented = TRUE  THEN TRY_CAST(k.gmv_usd AS DOUBLE) ELSE 0 END) AS subvented_gmv_usd,
+    SUM(CASE WHEN k.is_subvented = TRUE  THEN TRY_CAST(k.gmv_cad AS DOUBLE) ELSE 0 END) AS subvented_gmv_cad,
     SUM(CASE WHEN k.is_subvented = FALSE THEN TRY_CAST(k.gmv_usd AS DOUBLE) ELSE 0 END) AS interest_bearing_gmv_usd,
+    SUM(CASE WHEN k.is_subvented = FALSE THEN TRY_CAST(k.gmv_cad AS DOUBLE) ELSE 0 END) AS interest_bearing_gmv_cad,
     SUM(TRY_CAST(k.num_of_travelers_incl_minors AS DOUBLE))           AS passengers,
     AVG(TRY_CAST(k.booking_window AS DOUBLE))                         AS avg_booking_window,
     AVG(TRY_CAST(k.fico AS DOUBLE))                                   AS avg_fico
@@ -54,7 +49,6 @@ WHERE lower(k.vertical) = 'air'
 GROUP BY 1, 2, 3
 ORDER BY 1, 2, 3;
 
-select * from databrickstors_canalytics_catalog.decisioning.applicant limit 10
 
 -- ============================================================
 -- 2. Device Type (daily breakdown)
@@ -96,9 +90,16 @@ ORDER BY 1, 2, 3, 4;
 -- ============================================================
 SELECT * FROM (
     SELECT
-        partner_grouping_legacy, partner_short, air_od,
-        SUM(TRY_CAST(loan_count AS DOUBLE)) AS loan_count, SUM(TRY_CAST(gmv_usd AS DOUBLE)) AS gmv_usd,
-        ROW_NUMBER() OVER (PARTITION BY partner_grouping_legacy, partner_short ORDER BY SUM(loan_count) DESC) AS rank
+        partner_grouping_legacy,
+        partner_short,
+        air_od,
+        SUM(TRY_CAST(loan_count AS DOUBLE)) AS loan_count,
+        SUM(TRY_CAST(gmv_usd AS DOUBLE)) AS gmv_usd,
+        SUM(TRY_CAST(gmv_cad AS DOUBLE)) AS gmv_cad,
+        ROW_NUMBER() OVER (
+            PARTITION BY partner_grouping_legacy, partner_short
+            ORDER BY SUM(loan_count) DESC
+        ) AS rank
     FROM commercial_analytics.public.kpi_dashboard
     WHERE lower(vertical) = 'air'
       -- AND lower(partner_grouping_legacy) IN (
@@ -115,11 +116,18 @@ ORDER BY partner_grouping_legacy, partner_short, loan_count DESC;
 
 -- ============================================================
 -- 5. Top 10 Origins
+-- FIXED: a double-comma before gmv_cad (trailing comma on the
+-- gmv_usd line PLUS a leading comma on the next line) - invalid
+-- SQL syntax, not just style.
 -- ============================================================
 SELECT * FROM (
     SELECT
-        partner_grouping_legacy, partner_short, air_origin AS origin,
-        SUM(TRY_CAST(loan_count AS DOUBLE)) AS loan_count, SUM(TRY_CAST(gmv_usd AS DOUBLE)) AS gmv_usd,
+        partner_grouping_legacy,
+        partner_short,
+        air_origin AS origin,
+        SUM(TRY_CAST(loan_count AS DOUBLE)) AS loan_count,
+        SUM(TRY_CAST(gmv_usd AS DOUBLE)) AS gmv_usd,
+        SUM(TRY_CAST(gmv_cad AS DOUBLE)) AS gmv_cad,
         ROW_NUMBER() OVER (PARTITION BY partner_grouping_legacy, partner_short ORDER BY SUM(loan_count) DESC) AS rn
     FROM commercial_analytics.public.kpi_dashboard
     WHERE lower(vertical) = 'air'
@@ -137,11 +145,14 @@ ORDER BY partner_grouping_legacy, partner_short, loan_count DESC;
 
 -- ============================================================
 -- 6. Top 10 Destinations
+-- FIXED: same double-comma bug as query 5, before gmv_cad.
 -- ============================================================
 SELECT * FROM (
     SELECT
         partner_grouping_legacy, partner_short, air_destination AS destination,
-        SUM(TRY_CAST(loan_count AS DOUBLE)) AS loan_count, SUM(TRY_CAST(gmv_usd AS DOUBLE)) AS gmv_usd,
+        SUM(TRY_CAST(loan_count AS DOUBLE)) AS loan_count,
+        SUM(TRY_CAST(gmv_usd AS DOUBLE)) AS gmv_usd,
+        SUM(TRY_CAST(gmv_cad AS DOUBLE)) AS gmv_cad,
         ROW_NUMBER() OVER (PARTITION BY partner_grouping_legacy, partner_short ORDER BY SUM(loan_count) DESC) AS rn
     FROM commercial_analytics.public.kpi_dashboard
     WHERE lower(vertical) = 'air'
@@ -158,14 +169,7 @@ ORDER BY partner_grouping_legacy, partner_short, loan_count DESC;
 
 
 -- ============================================================
--- 7. Loan Term (daily breakdown)
--- FIXED: "IN lower(...)" is invalid syntax - lower() takes one
--- argument, not a list. Changed to lower(column) IN (lowercase
--- list), matching queries 1-6's pattern.
--- FLAG: l.term - please confirm this is the correct column name
--- (previous versions used l.loan_term). Left as authored since
--- you may know something about the schema I don't - but this is
--- unverified and worth double-checking before trusting results.
+-- 7. Loan Term (daily breakdown) - has to be run seperately due ot the number of rows
 -- ============================================================
 SELECT
     k.partner_grouping_legacy, k.partner_short, k.date_etz,
@@ -186,14 +190,6 @@ ORDER BY 1, 2, 3, 4;
 
 -- ============================================================
 -- 8. Total Unique Customers
--- FIXED: joining pc via sdk_key_mapping_id alone was silently
--- dropping every application from before ~mid-2025 (sdk_key_mapping_id
--- appears to be NULL on older records) - added a fallback join via
--- pc.upcode = a.uplift_upcode using two separate LEFT JOINs +
--- COALESCE, so a row missing sdk_key_mapping_id can still match on
--- upcode instead. Using two LEFT JOINs (not an OR in one join
--- condition) specifically to avoid a fan-out if a row happened to
--- match both keys to different pc rows.
 -- ============================================================
 SELECT 
     COALESCE(pc1.partner_grouping, pc2.partner_grouping) AS partner_group,
@@ -219,12 +215,20 @@ ORDER BY 1, 2;
 
 -- ============================================================
 -- 9. New vs Repeat Customers (Within Partner)
--- No structural issues found - uses core.application_bnpl and
--- pc.sdk_key_id consistently. Left as authored.
+-- FIXED: a double-comma in the CTE before gmv_cad (same bug
+-- pattern as queries 5/6).
+-- FIXED: the "repeat" block was missing repeat_gmv_cad and
+-- repeat_aov_usd entirely, and repeat_aov_cad was mismatched
+-- with no repeat_gmv_cad alongside it. Now fully symmetric with
+-- the "new" block: gmv_usd, gmv_cad, aov_usd, aov_cad for both
+-- new and repeat.
 -- ============================================================
 WITH emirates_loans AS (
     SELECT 
-        a.legal_entity_id, l.loan_id, TRY_CAST(k.gmv_usd AS DOUBLE) AS gmv_usd,
+        a.legal_entity_id,
+        l.loan_id,
+        TRY_CAST(k.gmv_usd AS DOUBLE) AS gmv_usd,
+        TRY_CAST(k.gmv_cad AS DOUBLE) AS gmv_cad,
         COALESCE(pc1.vertical, pc2.vertical) AS vertical,
         DATE_TRUNC('quarter', from_utc_timestamp(l.origination_date, 'America/New_York')) AS loan_quarter,
         COALESCE(pc1.partner_short, pc2.partner_short) AS partner_short,
@@ -248,20 +252,28 @@ WITH emirates_loans AS (
       -- )
 )
 SELECT
-    partner_group, partner_short, vertical,
+    partner_group,
+    partner_short,
+    vertical,
     CONCAT('Q', QUARTER(loan_quarter), '-', YEAR(loan_quarter)) AS quarter,
     COUNT(DISTINCT CASE WHEN loan_quarter = first_emirates_quarter THEN legal_entity_id END) AS new_unique_customers,
     COUNT(CASE WHEN loan_quarter = first_emirates_quarter THEN loan_id END) AS new_loan_count,
     SUM(CASE WHEN loan_quarter = first_emirates_quarter THEN gmv_usd END) AS new_gmv_usd,
+    SUM(CASE WHEN loan_quarter = first_emirates_quarter THEN gmv_cad END) AS new_gmv_cad,
     AVG(CASE WHEN loan_quarter = first_emirates_quarter THEN gmv_usd END) AS new_aov_usd,
+    AVG(CASE WHEN loan_quarter = first_emirates_quarter THEN gmv_cad END) AS new_aov_cad,
     COUNT(DISTINCT CASE WHEN loan_quarter > first_emirates_quarter THEN legal_entity_id END) AS repeat_unique_customers,
     COUNT(CASE WHEN loan_quarter > first_emirates_quarter THEN loan_id END) AS repeat_loan_count,
     SUM(CASE WHEN loan_quarter > first_emirates_quarter THEN gmv_usd END) AS repeat_gmv_usd,
+    SUM(CASE WHEN loan_quarter > first_emirates_quarter THEN gmv_cad END) AS repeat_gmv_cad,
     AVG(CASE WHEN loan_quarter > first_emirates_quarter THEN gmv_usd END) AS repeat_aov_usd,
+    AVG(CASE WHEN loan_quarter > first_emirates_quarter THEN gmv_cad END) AS repeat_aov_cad,
     COUNT(DISTINCT legal_entity_id) AS total_unique_customers,
     COUNT(loan_id) AS total_loan_count,
     SUM(gmv_usd) AS total_gmv_usd,
+    SUM(gmv_cad) AS total_gmv_cad,
     AVG(gmv_usd) AS total_aov_usd,
+    AVG(gmv_cad) AS total_aov_cad,
     ROUND(100.0 * COUNT(DISTINCT CASE WHEN loan_quarter = first_emirates_quarter THEN legal_entity_id END) / NULLIF(COUNT(DISTINCT legal_entity_id), 0), 1) AS new_customer_pct,
     ROUND(100.0 * COUNT(DISTINCT CASE WHEN loan_quarter > first_emirates_quarter THEN legal_entity_id END) / NULLIF(COUNT(DISTINCT legal_entity_id), 0), 1) AS repeat_customer_pct
 FROM emirates_loans
@@ -271,7 +283,9 @@ ORDER BY 1, 2, 4;
 
 -- ============================================================
 -- 10. Demographics (Age Generations / FICO)
--- FIXED: "AND AND" double-keyword typo.
+-- NOTE: gmv/aov columns renamed to gmv_usd/aov_usd (from the
+-- old plain gmv/aov) with new gmv_cad/aov_cad added alongside -
+-- this is a real column-name change, not just an addition.
 -- ============================================================
 SELECT
     COALESCE(pc1.partner_grouping, pc2.partner_grouping) AS partner_group,
@@ -296,8 +310,10 @@ SELECT
     l.currency,
     COUNT(DISTINCT a.legal_entity_id) AS unique_customers,
     COUNT(l.loan_id) AS loan_count,
-    SUM(TRY_CAST(k.gmv_usd AS DOUBLE)) AS gmv,
-    AVG(TRY_CAST(k.gmv_usd AS DOUBLE)) AS aov,
+    SUM(TRY_CAST(k.gmv_usd AS DOUBLE)) AS gmv_usd,
+    SUM(TRY_CAST(k.gmv_cad AS DOUBLE)) AS gmv_cad,
+    AVG(TRY_CAST(k.gmv_usd AS DOUBLE)) AS aov_usd,
+    AVG(TRY_CAST(k.gmv_cad AS DOUBLE)) AS aov_cad,
     ROUND(AVG((l.fico_range_low + l.fico_range_high) / 2.0), 0) AS avg_fico,
     ROUND(AVG(l.stated_annual_income), 0) AS avg_household_income
 FROM databrickstors_canalytics_catalog.core.loan_issued_bnpl l
@@ -321,11 +337,6 @@ ORDER BY 1, 4, 3;
 
 -- ============================================================
 -- 11. Trip Duration (daily bucket breakdown)
--- Buckets each individual loan's actual trip length (departure to
--- arrival) FIRST, then counts loans per bucket per day - this
--- preserves the true distribution, unlike averaging duration per
--- day and bucketing the averages (which was shown to distort short
--- and long-tail trips almost out of existence).
 -- ============================================================
 SELECT
     partner_grouping_legacy,
