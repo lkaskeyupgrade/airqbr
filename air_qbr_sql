@@ -88,6 +88,7 @@ ORDER BY 1, 2, 3, 4;
 -- ============================================================
 -- 4. Top 10 O&Ds
 -- ============================================================
+--not getting the destination
 SELECT * FROM (
     SELECT
         partner_grouping_legacy,
