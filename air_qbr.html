@@ -1,0 +1,1047 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Air Vertical QBR</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
+<style>
+:root{--g1:#0B530B;--g2:#0E680E;--g3:#2B811D;--g4:#499B2D;--g5:#88BE76;--g6:#BFDCB5;
+  --light:#EAF2E6;--bg:#F4F8F2;--sf:#FFFFFF;--bd:#CCDFC7;--bl:#DFF0DA;
+  --tx:#0D1F09;--mu:#3D6030;--fa:#7DA870;--r:10px;--sh:0 1px 3px rgba(0,0,0,.08)}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--tx);font-size:14px}
+.hd{background:var(--g1);padding:12px 22px;display:flex;align-items:center;justify-content:space-between}
+.hd-l{display:flex;align-items:center;gap:11px}
+.hbar{width:5px;height:34px;background:var(--g3);border-radius:3px}
+.hd h1{font-size:16px;font-weight:600;color:#fff;letter-spacing:-.3px}
+.hd-s{font-size:11px;color:rgba(255,255,255,.55);margin-top:2px}
+.hd-r{font-size:11px;color:rgba(255,255,255,.45);text-align:right;line-height:1.7}
+
+/* LOAD SCREEN */
+.load-screen{display:flex;align-items:center;justify-content:center;height:calc(100vh - 60px);flex-direction:column;gap:14px}
+.load-card{background:var(--sf);border:1px solid var(--bd);border-radius:var(--r);padding:36px 44px;box-shadow:var(--sh);text-align:center;max-width:420px}
+.load-card h2{font-size:16px;margin-bottom:8px}
+.load-card p{font-size:12px;color:var(--mu);margin-bottom:18px;line-height:1.5}
+.load-btn{background:var(--g2);color:#fff;border:none;padding:9px 22px;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer}
+.load-btn:hover{background:var(--g1)}
+.load-err{color:#B23A3A;font-size:12px;margin-top:10px}
+#file-input{display:none}
+
+/* FILTER BAR */
+.fb{background:var(--sf);border-bottom:1px solid var(--bd);padding:7px 22px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;position:sticky;top:0;z-index:100;box-shadow:0 1px 4px rgba(0,0,0,.06)}
+.fbl{font-size:10px;font-weight:600;color:var(--mu);text-transform:uppercase;letter-spacing:.5px;white-space:nowrap}
+.fbg{display:flex;gap:3px;flex-wrap:wrap}
+.fbb{padding:3px 10px;font-size:11px;font-weight:500;border:1px solid var(--bd);border-radius:12px;cursor:pointer;background:none;color:var(--mu);transition:all .12s;white-space:nowrap}
+.fbb:hover{border-color:var(--g3);color:var(--g2)}
+.fbb.active{background:var(--g2);border-color:var(--g2);color:#fff}
+.fbdv{width:1px;height:16px;background:var(--bd);flex-shrink:0}
+.fbsl{font-size:11px;color:var(--mu);background:var(--bg);border:1px solid var(--bd);border-radius:6px;padding:2px 6px;font-family:inherit}
+.fbsl:focus{outline:none;border-color:var(--g3)}
+.arl{font-size:11px;color:var(--g2);font-weight:500;background:var(--light);padding:2px 9px;border-radius:11px;border:1px solid var(--bd);white-space:nowrap}
+.psel{font-size:12px;font-weight:600;color:var(--tx);background:var(--sf);border:1px solid var(--bd);border-radius:8px;padding:4px 10px;font-family:inherit;min-width:160px}
+.psel:focus{outline:none;border-color:var(--g3)}
+
+/* LAYOUT */
+.shell{display:flex;height:calc(100vh - 90px)}
+.sb{width:182px;flex-shrink:0;background:var(--sf);border-right:1px solid var(--bd);padding:8px 0;position:sticky;top:90px;height:calc(100vh - 90px);overflow-y:auto}
+.ns{font-size:10px;font-weight:600;letter-spacing:.8px;text-transform:uppercase;color:var(--fa);padding:8px 13px 3px}
+.ni{display:flex;align-items:center;gap:6px;padding:6px 13px;cursor:pointer;font-size:12px;color:var(--mu);border-left:3px solid transparent;transition:all .12s;white-space:nowrap}
+.ni:hover{color:var(--tx);background:#F0F5EE}
+.ni.active{color:var(--g2);border-left-color:var(--g2);background:var(--light);font-weight:500}
+.nd{width:5px;height:5px;border-radius:50%;background:currentColor;flex-shrink:0}
+
+.main{flex:1;padding:16px 20px;overflow-y:auto}
+.pg{display:none}.pg.active{display:block}
+.pt{font-size:16px;font-weight:600;letter-spacing:-.3px;margin-bottom:2px}
+.ps{font-size:11px;color:var(--mu);margin-bottom:13px}
+
+.ptbar{display:flex;gap:5px;margin-bottom:11px;flex-wrap:wrap;align-items:center}
+.ptlbl{font-size:10px;color:var(--mu);margin-right:2px;text-transform:uppercase;letter-spacing:.4px}
+.ptt{padding:3px 11px;font-size:11px;font-weight:500;border:1px solid var(--bd);border-radius:13px;cursor:pointer;background:var(--sf);color:var(--mu);transition:all .12s}
+.ptt:hover{border-color:var(--g3);color:var(--g2)}
+.ptt.active{background:var(--g2);border-color:var(--g2);color:#fff}
+
+.card{background:var(--sf);border:1px solid var(--bd);border-radius:var(--r);padding:12px 15px;box-shadow:var(--sh)}
+.ct{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--mu);margin-bottom:8px}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-bottom:9px}
+.g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:9px;margin-bottom:9px}
+.cw{position:relative;width:100%}
+
+.kr{display:grid;grid-template-columns:repeat(6,1fr);gap:7px;margin-bottom:11px}
+.kpi{background:var(--sf);border:1px solid var(--bd);border-radius:var(--r);padding:10px 12px;box-shadow:var(--sh)}
+.kpi.ak{border-left:3px solid var(--g2)}
+.kl{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--fa);margin-bottom:3px}
+.kv{font-size:19px;font-weight:600;letter-spacing:-.5px;line-height:1}
+.ks{font-size:10px;color:var(--fa);margin-top:3px}
+
+table.dt{width:100%;border-collapse:collapse;font-size:12px}
+table.dt th{text-align:left;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.4px;color:var(--fa);padding:4px 6px;border-bottom:1px solid var(--bd)}
+table.dt th.r{text-align:right}
+table.dt td{padding:5px 6px;border-bottom:1px solid var(--bl);color:var(--tx)}
+table.dt td.r{text-align:right;font-variant-numeric:tabular-nums}
+table.dt tr:last-child td{border-bottom:none}
+table.dt tr:hover td{background:#F5FAF3}
+.rb{display:inline-block;width:17px;height:17px;border-radius:4px;background:var(--bg);color:var(--mu);font-size:10px;font-weight:600;text-align:center;line-height:17px}
+
+.bt{background:#E8F2E4;border-radius:3px;height:12px;overflow:hidden}
+.bf{height:100%;border-radius:3px}
+
+.ptog{padding:3px 10px;font-size:11px;border:1px solid var(--bd);border-radius:13px;cursor:pointer;background:none;color:var(--mu);transition:all .12s}
+.ptog.active{background:var(--bg);color:var(--tx);font-weight:500;border-color:#A5C89E}
+.ptogrow{display:flex;gap:5px;margin-bottom:9px;flex-wrap:wrap}
+.note{font-size:11px;color:var(--mu);background:#FFFDF5;border:1px solid #D5C97A;border-radius:6px;padding:6px 10px;margin-top:8px;line-height:1.5}
+</style>
+</head>
+<body>
+
+<div id="load-screen" class="load-screen">
+  <div class="load-card">
+    <h2>Air Vertical QBR</h2>
+    <p>Load the data file (<code>air_qbr_data.json.gz</code>) to open the dashboard. Nothing is embedded in this HTML file - all data loads fresh each time you open it, so this file always reflects whatever data file you point it at.</p>
+    <button class="load-btn" onclick="document.getElementById('file-input').click()">Load Data File</button>
+    <input type="file" id="file-input" accept=".gz,.json" onchange="handleFileLoad(event)">
+    <div id="load-err" class="load-err"></div>
+  </div>
+</div>
+
+<div id="dashboard-root" style="display:none">
+<div class="hd">
+  <div class="hd-l"><div class="hbar"></div>
+    <div><h1>Air Vertical QBR</h1><div class="hd-s" id="hd-sub">&nbsp;</div></div>
+  </div>
+  <div class="hd-r" id="hd-r">&nbsp;</div>
+</div>
+
+<div class="fb">
+  <span class="fbl">Partner:</span>
+  <select class="psel" id="partner-select" onchange="onPartnerChange()"></select>
+  <div class="fbdv"></div>
+  <span class="fbl">View:</span>
+  <div class="fbg">
+    <button class="fbb" onclick="setGrain('day',this)">Day</button>
+    <button class="fbb active" onclick="setGrain('month',this)">Month</button>
+    <button class="fbb" onclick="setGrain('quarter',this)">Quarter</button>
+    <button class="fbb" onclick="setGrain('year',this)">Year</button>
+    <button class="fbb" onclick="setGrain('aggregated',this)">Aggregated</button>
+  </div>
+  <div class="fbdv"></div>
+  <span class="fbl">Quick:</span>
+  <div class="fbg" id="quick-btns"></div>
+  <div class="fbdv"></div>
+  <span class="fbl">From:</span>
+  <input type="date" class="fbsl" id="sel-from" onchange="setCR()">
+  <span class="fbl">To:</span>
+  <input type="date" class="fbsl" id="sel-to" onchange="setCR()">
+  <div class="fbdv"></div>
+  <span class="arl" id="arl">&nbsp;</span>
+  <div class="fbdv"></div>
+  <span class="fbl">Currency:</span>
+  <div class="fbg">
+    <button class="fbb active" id="curr-usd" onclick="setCurrency('usd',this)">USD</button>
+    <button class="fbb" id="curr-cad" onclick="setCurrency('cad',this)">CAD</button>
+  </div>
+</div>
+
+<div class="shell">
+  <div class="sb">
+    <div class="ns">Overview</div>
+    <div class="ni active" onclick="nav('summary',this)"><span class="nd"></span>Summary</div>
+    <div class="ns">Core KPIs</div>
+    <div class="ni" onclick="nav('loans',this)"><span class="nd"></span>Loans</div>
+    <div class="ni" onclick="nav('gmv',this)"><span class="nd"></span>GMV &amp; AOV</div>
+    <div class="ni" onclick="nav('sub',this)"><span class="nd"></span>Subvention</div>
+    <div class="ni" onclick="nav('bw',this)"><span class="nd"></span>Booking Window</div>
+    <div class="ni" onclick="nav('fico',this)"><span class="nd"></span>FICO</div>
+    <div class="ni" onclick="nav('pax',this)"><span class="nd"></span>Passengers</div>
+    <div class="ni" onclick="nav('term',this)"><span class="nd"></span>Loan Term</div>
+    <div class="ni" onclick="nav('device',this)"><span class="nd"></span>Device Type</div>
+    <div class="ni" onclick="nav('fare',this)"><span class="nd"></span>Fare Class</div>
+    <div class="ns">Customers</div>
+    <div class="ni" onclick="nav('uniq',this)"><span class="nd"></span>Unique Customers</div>
+    <div class="ni" onclick="nav('rep',this)"><span class="nd"></span>New vs Repeat</div>
+    <div class="ni" onclick="nav('gen',this)"><span class="nd"></span>Generation Mix</div>
+    <div class="ns">Routes</div>
+    <div class="ni" onclick="nav('od',this)"><span class="nd"></span>Top O&amp;Ds</div>
+    <div class="ni" onclick="nav('orig',this)"><span class="nd"></span>Top Origins</div>
+    <div class="ni" onclick="nav('dest',this)"><span class="nd"></span>Top Destinations</div>
+  </div>
+
+  <div class="main">
+    <div id="page-summary" class="pg active"></div>
+    <div id="page-loans" class="pg"></div>
+    <div id="page-gmv" class="pg"></div>
+    <div id="page-sub" class="pg"></div>
+    <div id="page-bw" class="pg"></div>
+    <div id="page-fico" class="pg"></div>
+    <div id="page-pax" class="pg"></div>
+    <div id="page-term" class="pg"></div>
+    <div id="page-device" class="pg"></div>
+    <div id="page-fare" class="pg"></div>
+    <div id="page-uniq" class="pg"></div>
+    <div id="page-rep" class="pg"></div>
+    <div id="page-gen" class="pg"></div>
+    <div id="page-od" class="pg"></div>
+    <div id="page-orig" class="pg"></div>
+    <div id="page-dest" class="pg"></div>
+  </div>
+</div>
+</div>
+
+<script>
+// ── FILE LOADING ─────────────────────────────────────────────────────
+let DATA = null;       // parsed full dataset after decompression
+let PARTNERS = [];     // sorted list of distinct partner_grouping values
+let currentPartner = null;
+let channels = [];     // distinct partner_short values under currentPartner (or ['US','CA'] in All Partners mode)
+let DATES = [];        // ISO date strings spanning the loaded data's range
+let DATES_MIN_IDX = 0; // raw day-index corresponding to DATES[0], for O(1) position lookup
+let EPOCH = null;
+const ALL_PARTNERS = '__ALL_PARTNERS__';
+
+// Classifies a raw channel string (e.g. "Air Canada - Web CA - API") into
+// 'US' or 'CA' by looking for that token as a standalone word. Returns
+// null if neither matches (excluded from All Partners aggregation).
+function classifyGeo(channel) {
+  if (channel == null) return null;
+  if (/\bUS\b/i.test(channel)) return 'US';
+  if (/\bCA\b/i.test(channel)) return 'CA';
+  return null;
+}
+// True if a row's partner matches the current selection - always true in
+// All Partners mode, exact match otherwise.
+function matchesPartner(rowPartner) {
+  return currentPartner === ALL_PARTNERS || rowPartner === currentPartner;
+}
+// The grouping key a row's channel should fall under - the raw channel
+// in single-partner mode (unchanged), or its US/CA classification in
+// All Partners mode (so 36 partners' worth of channels collapse to 2).
+function groupKeyFor(rawChannel) {
+  return currentPartner === ALL_PARTNERS ? classifyGeo(rawChannel) : rawChannel;
+}
+// Which axis a series belongs on - CA always gets the secondary (right)
+// axis, since CA and US totals are often at very different scales and
+// share one axis poorly. Works on both raw channel strings (single-
+// partner mode) and plain 'US'/'CA' labels (All Partners mode).
+function axisFor(label) {
+  return classifyGeo(label) === 'CA' ? 'y1' : 'y';
+}
+
+function handleFileLoad(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const errEl = document.getElementById('load-err');
+  errEl.textContent = '';
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      const buf = new Uint8Array(e.target.result);
+      let text;
+      // Detect gzip magic bytes (1f 8b) vs plain JSON
+      if (buf[0] === 0x1f && buf[1] === 0x8b) {
+        text = pako.inflate(buf, { to: 'string' });
+      } else {
+        text = new TextDecoder('utf-8').decode(buf);
+      }
+      DATA = JSON.parse(text);
+      initDashboard();
+    } catch (err) {
+      errEl.textContent = 'Could not load this file: ' + err.message;
+      console.error(err);
+    }
+  };
+  reader.onerror = function() {
+    errEl.textContent = 'File read error.';
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function initDashboard() {
+  EPOCH = new Date(DATA.epoch + 'T00:00:00Z');
+
+  // Build sorted partner list from daily_metrics (most complete source)
+  const pset = new Set();
+  DATA.daily_metrics.forEach(r => pset.add(r[0]));
+  PARTNERS = Array.from(pset).sort();
+
+  // Build global DATES range spanning min/max date_idx across daily_metrics
+  let minIdx = Infinity, maxIdx = -Infinity;
+  DATA.daily_metrics.forEach(r => {
+    const idx = r[2];
+    if (idx == null) return;
+    if (idx < minIdx) minIdx = idx;
+    if (idx > maxIdx) maxIdx = idx;
+  });
+  DATES_MIN_IDX = minIdx;
+  DATES = [];
+  for (let i = minIdx; i <= maxIdx; i++) {
+    const d = new Date(EPOCH.getTime() + i * 86400000);
+    DATES.push(d.toISOString().slice(0,10));
+  }
+
+  // Populate partner selector - "All Partners" first and default
+  const sel = document.getElementById('partner-select');
+  sel.innerHTML = `<option value="${ALL_PARTNERS}">All Partners</option>` +
+    PARTNERS.map(p => `<option value="${p}">${p}</option>`).join('');
+  currentPartner = ALL_PARTNERS;
+  sel.value = currentPartner;
+
+  // Populate quick-filter buttons based on actual data year range
+  buildQuickButtons();
+
+  // Set up date pickers
+  document.getElementById('sel-from').min = DATES[0];
+  document.getElementById('sel-from').max = DATES[DATES.length-1];
+  document.getElementById('sel-to').min = DATES[0];
+  document.getElementById('sel-to').max = DATES[DATES.length-1];
+  document.getElementById('sel-from').value = DATES[0];
+  document.getElementById('sel-to').value = DATES[DATES.length-1];
+  rfrom = 0; rto = DATES.length - 1;
+  filFrom = DATES[0]; filTo = DATES[DATES.length-1];
+
+  document.getElementById('load-screen').style.display = 'none';
+  document.getElementById('dashboard-root').style.display = 'block';
+  document.getElementById('hd-r').innerHTML = DATES[0] + ' – ' + DATES[DATES.length-1];
+
+  updateLbl();
+  onPartnerChange();
+}
+
+function buildQuickButtons() {
+  const years = new Set();
+  DATES.forEach(d => years.add(d.slice(0,4)));
+  const sortedYears = Array.from(years).sort();
+  const container = document.getElementById('quick-btns');
+  let html = '';
+  sortedYears.forEach(y => {
+    html += `<button class="fbb" onclick="setQuickYear('${y}',this)">FY ${y}</button>`;
+  });
+  html += `<button class="fbb active" onclick="setQuickAll(this)">All time</button>`;
+  container.innerHTML = html;
+}
+
+// ── FILTER STATE ──────────────────────────────────────────────────────
+let grain = 'month', rfrom = 0, rto = 0;
+let curr = 'usd'; // 'usd' or 'cad' - toggles which pre-computed column every $ figure reads
+function setCurrency(c, el) {
+  curr = c;
+  document.getElementById('curr-usd').classList.toggle('active', c==='usd');
+  document.getElementById('curr-cad').classList.toggle('active', c==='cad');
+  renderAll();
+}
+let filFrom = '', filTo = '';
+
+function setCR() {
+  const f = document.getElementById('sel-from').value;
+  const t = document.getElementById('sel-to').value;
+  if (f > t) { document.getElementById('sel-to').value = f; return; }
+  rfrom = DATES.indexOf(f); if (rfrom < 0) rfrom = 0;
+  rto = DATES.indexOf(t); if (rto < 0) rto = DATES.length - 1;
+  filFrom = f; filTo = t;
+  document.querySelectorAll('#quick-btns .fbb').forEach(b => b.classList.remove('active'));
+  updateLbl(); renderAll();
+}
+
+function setQuickYear(y, el) {
+  document.querySelectorAll('#quick-btns .fbb').forEach(b => b.classList.remove('active'));
+  el.classList.add('active');
+  const f = y + '-01-01', t = y + '-12-31';
+  document.getElementById('sel-from').value = f;
+  document.getElementById('sel-to').value = t;
+  rfrom = DATES.indexOf(f); if (rfrom < 0) rfrom = 0;
+  rto = DATES.indexOf(t); if (rto < 0) rto = DATES.length - 1;
+  filFrom = f; filTo = t;
+  updateLbl(); renderAll();
+}
+
+function setQuickAll(el) {
+  document.querySelectorAll('#quick-btns .fbb').forEach(b => b.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('sel-from').value = DATES[0];
+  document.getElementById('sel-to').value = DATES[DATES.length-1];
+  rfrom = 0; rto = DATES.length - 1;
+  filFrom = '0000-01-01'; filTo = '9999-12-31'; // wide open for quarter-based sections (New vs Repeat)
+  updateLbl(); renderAll();
+}
+
+function setGrain(g, el) {
+  grain = g;
+  document.querySelectorAll('.fb .fbg')[0].querySelectorAll('.fbb').forEach(b => b.classList.remove('active'));
+  el.classList.add('active');
+  renderAll();
+}
+
+function updateLbl() {
+  const f = document.getElementById('sel-from').value;
+  const t = document.getElementById('sel-to').value;
+  document.getElementById('arl').textContent = f + ' \u2013 ' + t;
+}
+
+function onPartnerChange() {
+  currentPartner = document.getElementById('partner-select').value;
+  const chSet = new Set();
+  DATA.daily_metrics.forEach(r => {
+    if (!matchesPartner(r[0])) return;
+    const key = groupKeyFor(r[1]);
+    if (key != null) chSet.add(key);
+  });
+  channels = Array.from(chSet).sort();
+  const label = currentPartner === ALL_PARTNERS ? 'All Partners' : currentPartner;
+  document.getElementById('hd-sub').textContent = label + ' \u00b7 ' + channels.length + ' channel' + (channels.length===1?'':'s');
+  renderAll();
+}
+
+function nav(page, el) {
+  document.querySelectorAll('.ni').forEach(n => n.classList.remove('active'));
+  el.classList.add('active');
+  document.querySelectorAll('.pg').forEach(p => p.classList.remove('active'));
+  document.getElementById('page-' + page).classList.add('active');
+}
+
+// ── PALETTE & FORMATTING ─────────────────────────────────────────────
+const PALETTE = ['#0B530B','#0E680E','#2B811D','#499B2D','#88BE76','#BFDCB5'];
+const AMBER = '#E0A239'; // reserved for highlight series (repeat %, interest-bearing) - not part of the per-channel rotation
+function colorFor(i) { return PALETTE[i % PALETTE.length]; }
+// US channels always draw from the darker half of the palette, CA
+// channels from the lighter half - a fixed color rule (not dependent on
+// array position), replacing the earlier dashed-line approach. Within
+// each geo group, multiple channels (e.g. a partner with several CA
+// variants) still cycle through distinct shades so they stay
+// individually distinguishable rather than all collapsing to one color.
+const US_SHADES = [1, 0, 2]; // palette indices, darkest three
+const CA_SHADES = [4, 5, 3]; // palette indices, lightest three
+function colorForChannel(label, i) {
+  const geo = classifyGeo(label);
+  if (geo === 'US') {
+    const idx = channels.filter(c => classifyGeo(c) === 'US').indexOf(label);
+    return PALETTE[US_SHADES[idx % US_SHADES.length]];
+  }
+  if (geo === 'CA') {
+    const idx = channels.filter(c => classifyGeo(c) === 'CA').indexOf(label);
+    return PALETTE[CA_SHADES[idx % CA_SHADES.length]];
+  }
+  return colorFor(i);
+}
+
+function fm(v) {
+  if (v == null || isNaN(v)) return '$0';
+  return '$' + Math.round(v).toLocaleString();
+}
+function fmS(v) {
+  if (v == null || isNaN(v)) return '$0';
+  const a = Math.abs(v);
+  if (a >= 1e6) return '$' + (v/1e6).toFixed(1) + 'M';
+  if (a >= 1e3) return '$' + (v/1e3).toFixed(0) + 'K';
+  return '$' + Math.round(v);
+}
+function hexToRgba(hex, alpha) {
+  const h = hex.replace('#','');
+  const r = parseInt(h.substring(0,2),16), g = parseInt(h.substring(2,4),16), b = parseInt(h.substring(4,6),16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+function legendLabels() {
+  return {font:{size:10},boxWidth:10,padding:7,usePointStyle:true,
+    generateLabels: chart => chart.data.datasets.map((ds,i)=>({
+      text: ds.label, fillStyle: ds.borderColor, strokeStyle: ds.borderColor,
+      lineWidth: 0, hidden: !chart.isDatasetVisible(i), datasetIndex: i, pointStyle: 'circle'
+    }))};
+}
+
+// ── GENERIC AGGREGATION ENGINE ───────────────────────────────────────
+function bucketLabel(dateIdx, g) {
+  const d = new Date(EPOCH.getTime() + dateIdx*86400000);
+  const y = d.getUTCFullYear(), mo = d.getUTCMonth()+1;
+  if (g==='day') return d.toISOString().slice(0,10);
+  if (g==='month') return `${y}-${String(mo).padStart(2,'0')}`;
+  if (g==='quarter') return `Q${Math.ceil(mo/3)}-${y}`;
+  if (g==='year') return String(y);
+  return 'All';
+}
+function bucketSort(a, b) {
+  // day/month sort lexically fine; quarter needs numeric year+quarter sort
+  if (a.startsWith('Q') && b.startsWith('Q')) {
+    const [qa, ya] = a.slice(1).split('-'); const [qb, yb] = b.slice(1).split('-');
+    return ya !== yb ? ya - yb : qa - qb;
+  }
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+// Filters daily_metrics to current partner + selected date range, returns
+// { channel: { bucketLabel: {loans, gmv, sub, int, pax, bwSum, bwCount, ficoSum, ficoCount} } }
+function aggregateDailyMetrics() {
+  const result = {};
+  channels.forEach(c => result[c] = {});
+
+  DATA.daily_metrics.forEach(row => {
+    const [partner, channel, dateIdx, loans, gmvUsd, gmvCad, subUsd, subCad, intUsd, intCad, pax, bw, fico] = row;
+    if (!matchesPartner(partner) || dateIdx == null) return;
+    const key = groupKeyFor(channel);
+    if (key == null) return;
+    const dPos = dateIdx - DATES_MIN_IDX;
+    if (dPos < rfrom || dPos > rto) return;
+    const gmv = curr === 'cad' ? gmvCad : gmvUsd;
+    const sub = curr === 'cad' ? subCad : subUsd;
+    const intr = curr === 'cad' ? intCad : intUsd;
+    const label = bucketLabel(dateIdx, grain);
+    if (!result[key]) result[key] = {};
+    if (!result[key][label]) result[key][label] = {loans:0,gmv:0,sub:0,int:0,pax:0,bwSum:0,bwCount:0,ficoSum:0,ficoCount:0};
+    const b = result[key][label];
+    b.loans += (loans||0); b.gmv += (gmv||0); b.sub += (sub||0); b.int += (intr||0); b.pax += (pax||0);
+    if (bw != null && loans) { b.bwSum += bw*loans; b.bwCount += loans; }
+    if (fico != null && loans) { b.ficoSum += fico*loans; b.ficoCount += loans; }
+  });
+  return result;
+}
+
+function allBucketLabels(aggResult) {
+  const s = new Set();
+  channels.forEach(c => { if (aggResult[c]) Object.keys(aggResult[c]).forEach(l => s.add(l)); });
+  return Array.from(s).sort(bucketSort);
+}
+
+let charts = {};
+function mk(id, config) {
+  const canvas = document.getElementById(id);
+  if (!canvas) return;
+  if (charts[id]) charts[id].destroy();
+  charts[id] = new Chart(canvas, config);
+}
+// Draws each bar's value as a % of the sum of ALL bars in that single
+// dataset - for simple (non-stacked, single-series) bar charts.
+const pctOfTotalPlugin = {
+  id: 'pctOfTotal',
+  afterDatasetsDraw(chart) {
+    const ctx = chart.ctx;
+    const meta = chart.getDatasetMeta(0);
+    if (!meta || !meta.data) return;
+    const data = chart.data.datasets[0].data;
+    const total = data.reduce((a,v) => a + (v||0), 0);
+    if (!total) return;
+    ctx.save();
+    ctx.font = 'bold 10px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.textAlign = 'center';
+    meta.data.forEach((bar, i) => {
+      const val = data[i] || 0;
+      if (!val) return;
+      const label = (Math.round(val/total*1000)/10) + '%';
+      const barTall = (bar.base - bar.y) > 16;
+      ctx.fillStyle = barTall ? '#fff' : '#0D1F09';
+      const yPos = barTall ? bar.y + 12 : bar.y - 4;
+      ctx.fillText(label, bar.x, yPos);
+    });
+    ctx.restore();
+  }
+};
+// Draws each segment's value as a % of that bar's own stack total (not
+// the grand total across every bar) - for stacked bar charts.
+const pctOfStackPlugin = {
+  id: 'pctOfStack',
+  afterDatasetsDraw(chart) {
+    const ctx = chart.ctx;
+    const datasets = chart.data.datasets;
+    if (!datasets.length) return;
+    const n = datasets[0].data.length;
+    ctx.save();
+    ctx.font = 'bold 10px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.textAlign = 'center';
+    for (let i = 0; i < n; i++) {
+      const stackTotal = datasets.reduce((sum, ds) => sum + (ds.data[i]||0), 0);
+      if (!stackTotal) continue;
+      datasets.forEach((ds, dsIdx) => {
+        const val = ds.data[i] || 0;
+        if (!val) return;
+        const meta = chart.getDatasetMeta(dsIdx);
+        const bar = meta.data[i];
+        if (!bar) return;
+        const label = (Math.round(val/stackTotal*1000)/10) + '%';
+        const barTall = (bar.base - bar.y) > 16;
+        ctx.fillStyle = barTall ? '#fff' : '#0D1F09';
+        const yPos = barTall ? (bar.y + bar.base)/2 + 3 : bar.y - 4;
+        ctx.fillText(label, bar.x, yPos);
+      });
+    }
+    ctx.restore();
+  }
+};
+function lineDs(color, values, dash=false, fill=false) {
+  return { data: values, borderColor: color, backgroundColor: fill ? hexToRgba(color, 0.08) : color,
+    borderWidth: 2, tension: 0.3, pointRadius: grain==='day'?0:2, fill,
+    borderDash: dash ? [5,4] : [] };
+}
+const xO = { grid: { display: false }, ticks: { font: { size: 11, weight: '600' }, color: '#0D1F09', minRotation: 90, maxRotation: 90, autoSkip: true } };
+// Category bar charts (Loan Term, Device Type, Fare Class) use short
+// labels (3, 6, US, Desktop...) that don't need vertical rotation the
+// way long date labels on the line charts do.
+const xCatO = { grid: { display: false }, ticks: { font: { size: 11, weight: '600' }, color: '#0D1F09', maxRotation: 0, autoSkip: true } };
+const yO = { grid: { color: 'rgba(0,0,0,0.05)' }, ticks: { font: { size: 12, weight: '600' }, color: PALETTE[1] } };
+const y1O = { position: 'right', grid: { drawOnChartArea: false }, ticks: { font: { size: 12, weight: '600' }, color: PALETTE[4] } };
+// Chart.js tooltips show the raw, unrounded value by default (full float
+// precision, no $ sign) - this formats them the same way the axis ticks
+// already are, so hovering never shows cents.
+const dollarTooltip = { callbacks: { label: ctx => `${ctx.dataset.label}: ${fm(ctx.parsed.y)}` } };
+
+function partnerLabel() {
+  return currentPartner === ALL_PARTNERS ? 'All Partners' : currentPartner;
+}
+
+// ── SUMMARY / OVERVIEW ────────────────────────────────────────────────
+function renderSummary() {
+  const agg = aggregateDailyMetrics();
+  const labels = allBucketLabels(agg);
+  let totalLoans=0, totalGMV=0;
+  channels.forEach(c => { Object.values(agg[c]||{}).forEach(b => { totalLoans+=b.loans; totalGMV+=b.gmv; }); });
+
+  const el = document.getElementById('page-summary');
+  el.innerHTML = `
+    <div class="pt">Overview</div><div class="ps">${partnerLabel()} \u00b7 ${channels.length} channel(s)</div>
+    <div class="kr" style="grid-template-columns:repeat(3,1fr)">
+      <div class="kpi ak"><div class="kl">Total Loans</div><div class="kv">${Math.round(totalLoans).toLocaleString()}</div></div>
+      <div class="kpi ak"><div class="kl">Total GMV</div><div class="kv">${fmS(totalGMV)}</div></div>
+      <div class="kpi"><div class="kl">Channels</div><div class="kv">${channels.length}</div></div>
+    </div>
+    <div class="card"><div class="ct">GMV by Period</div><div class="cw" style="height:220px"><canvas id="summaryChart"></canvas></div></div>
+  `;
+  const datasets = channels.map((c,i) => ({
+    label: c, yAxisID: axisFor(c),
+    ...lineDs(colorForChannel(c,i), labels.map(l => (agg[c]&&agg[c][l]) ? agg[c][l].gmv : 0), false)
+  }));
+  mk('summaryChart', {type:'line', data:{labels, datasets}, options:{responsive:true,maintainAspectRatio:false,
+    plugins:{legend:{display:true,position:'top',labels:legendLabels()}, tooltip:dollarTooltip},
+    scales:{x:xO, y:{...yO, ticks:{...yO.ticks, callback:v=>fmS(v)}}, y1:{...y1O, ticks:{...y1O.ticks, callback:v=>fmS(v)}}}}});
+}
+
+// ── LOANS ─────────────────────────────────────────────────────────────
+function renderLoans() {
+  const agg = aggregateDailyMetrics();
+  const labels = allBucketLabels(agg);
+  const el = document.getElementById('page-loans');
+  el.innerHTML = `
+    <div class="pt">Loans</div><div class="ps">by channel</div>
+    <div class="card"><div class="ct">Loan Count</div><div class="cw" style="height:240px"><canvas id="loansChart"></canvas></div></div>
+  `;
+  const datasets = channels.map((c,i) => ({
+    label: c, yAxisID: axisFor(c),
+    ...lineDs(colorForChannel(c,i), labels.map(l => (agg[c]&&agg[c][l]) ? agg[c][l].loans : 0), false)
+  }));
+  mk('loansChart', {type:'line', data:{labels, datasets}, options:{responsive:true,maintainAspectRatio:false,
+    plugins:{legend:{display:true,position:'top',labels:legendLabels()}}, scales:{x:xO,y:yO,y1:y1O}}});
+}
+
+// ── GMV & AOV ─────────────────────────────────────────────────────────
+function renderGMV() {
+  const agg = aggregateDailyMetrics();
+  const labels = allBucketLabels(agg);
+  const el = document.getElementById('page-gmv');
+  el.innerHTML = `
+    <div class="pt">GMV &amp; AOV</div><div class="ps">by channel \u00b7 All figures in ${curr.toUpperCase()}</div>
+    <div class="g2">
+      <div class="card"><div class="ct">GMV</div><div class="cw" style="height:210px"><canvas id="gmvChart"></canvas></div></div>
+      <div class="card"><div class="ct">AOV</div><div class="cw" style="height:210px"><canvas id="aovChart"></canvas></div></div>
+    </div>
+  `;
+  const gmvDs = channels.map((c,i) => ({
+    label: c, yAxisID: axisFor(c),
+    ...lineDs(colorForChannel(c,i), labels.map(l => (agg[c]&&agg[c][l]) ? agg[c][l].gmv : 0), false)
+  }));
+  const aovDs = channels.map((c,i) => ({
+    label: c, yAxisID: axisFor(c),
+    ...lineDs(colorForChannel(c,i), labels.map(l => {
+      const b = agg[c] && agg[c][l];
+      return b && b.loans ? b.gmv/b.loans : null;
+    }), false)
+  }));
+  mk('gmvChart', {type:'line', data:{labels, datasets:gmvDs}, options:{responsive:true,maintainAspectRatio:false,
+    plugins:{legend:{display:true,position:'top',labels:legendLabels()}, tooltip:dollarTooltip}, scales:{x:xO,y:{...yO,ticks:{...yO.ticks,callback:v=>fmS(v)}},y1:{...y1O,ticks:{...y1O.ticks,callback:v=>fmS(v)}}}}});
+  mk('aovChart', {type:'line', data:{labels, datasets:aovDs}, options:{responsive:true,maintainAspectRatio:false,
+    plugins:{legend:{display:true,position:'top',labels:legendLabels()}, tooltip:dollarTooltip}, scales:{x:xO,y:{...yO,ticks:{...yO.ticks,callback:v=>fmS(v)}},y1:{...y1O,ticks:{...y1O.ticks,callback:v=>fmS(v)}}}}});
+}
+
+// ── SUBVENTION ────────────────────────────────────────────────────────
+function renderSub() {
+  const agg = aggregateDailyMetrics();
+  const labels = allBucketLabels(agg);
+  const el = document.getElementById('page-sub');
+  el.innerHTML = `
+    <div class="pt">Subvention</div><div class="ps">Subvented vs interest-bearing GMV (${curr.toUpperCase()}), by channel \u2014 absolute and as a % mix</div>
+    <div id="sub-charts"></div>
+  `;
+  const container = document.getElementById('sub-charts');
+  container.innerHTML = channels.map((c,i) => `
+    <div class="card" style="margin-bottom:9px">
+      <div class="ct">${c}</div>
+      <div class="g2">
+        <div><div class="ps" style="margin-bottom:4px">Absolute ($)</div><div class="cw" style="height:170px"><canvas id="subChartAbs${i}"></canvas></div></div>
+        <div><div class="ps" style="margin-bottom:4px">Mix (%)</div><div class="cw" style="height:170px"><canvas id="subChartPct${i}"></canvas></div></div>
+      </div>
+    </div>
+  `).join('');
+  channels.forEach((c,i) => {
+    const subVals = labels.map(l=>(agg[c]&&agg[c][l])?agg[c][l].sub:0);
+    const intVals = labels.map(l=>(agg[c]&&agg[c][l])?agg[c][l].int:0);
+    const legend = {display:true,position:'top',labels:{font:{size:10},boxWidth:10}};
+    mk('subChartAbs'+i, {type:'bar', data:{labels, datasets:[
+      {label:'Subvented', data:subVals, backgroundColor:colorFor(0), borderRadius:2},
+      {label:'Interest-bearing', data:intVals, backgroundColor:AMBER, borderRadius:2}
+    ]}, options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend, tooltip:dollarTooltip}, scales:{x:{...xO,stacked:true},y:{...yO,stacked:true,ticks:{...yO.ticks,callback:v=>fmS(v)}}}}});
+    const subPct = subVals.map((v,j)=>{const t=v+intVals[j]; return t?Math.round(v/t*1000)/10:0;});
+    const intPct = intVals.map((v,j)=>{const t=v+subVals[j]; return t?Math.round(v/t*1000)/10:0;});
+    mk('subChartPct'+i, {type:'bar', data:{labels, datasets:[
+      {label:'Subvented', data:subPct, backgroundColor:colorFor(0), borderRadius:2},
+      {label:'Interest-bearing', data:intPct, backgroundColor:AMBER, borderRadius:2}
+    ]}, options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend}, scales:{x:{...xO,stacked:true},y:{...yO,stacked:true,min:0,max:100,ticks:{...yO.ticks,callback:v=>v+'%'}}}}});
+  });
+}
+
+// ── BOOKING WINDOW ────────────────────────────────────────────────────
+function renderBW() {
+  const agg = aggregateDailyMetrics();
+  const labels = allBucketLabels(agg);
+  const el = document.getElementById('page-bw');
+  el.innerHTML = `
+    <div class="pt">Booking Window</div><div class="ps">Average days between booking and departure, by channel</div>
+    <div class="card"><div class="ct">Avg Booking Window (days)</div><div class="cw" style="height:220px"><canvas id="bwChart"></canvas></div></div>
+  `;
+  const datasets = channels.map((c,i) => ({
+    label: c, yAxisID: axisFor(c),
+    ...lineDs(colorForChannel(c,i), labels.map(l => {
+      const b = agg[c] && agg[c][l];
+      return b && b.bwCount ? b.bwSum/b.bwCount : null;
+    }), false)
+  }));
+  mk('bwChart', {type:'line', data:{labels, datasets}, options:{responsive:true,maintainAspectRatio:false,
+    plugins:{legend:{display:true,position:'top',labels:legendLabels()}}, scales:{x:xO,y:yO,y1:y1O}}});
+}
+
+// ── FICO ──────────────────────────────────────────────────────────────
+function renderFico() {
+  const agg = aggregateDailyMetrics();
+  const labels = allBucketLabels(agg);
+  const el = document.getElementById('page-fico');
+  el.innerHTML = `
+    <div class="pt">FICO</div><div class="ps">Average FICO score, by channel</div>
+    <div class="card"><div class="ct">Avg FICO</div><div class="cw" style="height:220px"><canvas id="ficoChart"></canvas></div></div>
+  `;
+  const datasets = channels.map((c,i) => ({
+    label: c, yAxisID: axisFor(c),
+    ...lineDs(colorForChannel(c,i), labels.map(l => {
+      const b = agg[c] && agg[c][l];
+      return b && b.ficoCount ? b.ficoSum/b.ficoCount : null;
+    }), false)
+  }));
+  mk('ficoChart', {type:'line', data:{labels, datasets}, options:{responsive:true,maintainAspectRatio:false,
+    plugins:{legend:{display:true,position:'top',labels:legendLabels()}}, scales:{x:xO,y:{...yO,min:500,max:850},y1:{...y1O,min:500,max:850}}}});
+}
+
+// ── PASSENGERS ────────────────────────────────────────────────────────
+function renderPax() {
+  const agg = aggregateDailyMetrics();
+  const labels = allBucketLabels(agg);
+  const el = document.getElementById('page-pax');
+  el.innerHTML = `
+    <div class="pt">Passengers</div><div class="ps">Total travelers (incl. minors), by channel</div>
+    <div class="card" style="margin-bottom:9px"><div class="ct">Passengers</div><div class="cw" style="height:220px"><canvas id="paxChart"></canvas></div></div>
+    <div class="card"><div class="ct">Average Passengers per Loan</div><div class="cw" style="height:220px"><canvas id="paxPerLoanChart"></canvas></div></div>
+  `;
+  const datasets = channels.map((c,i) => ({
+    label: c, yAxisID: axisFor(c),
+    ...lineDs(colorForChannel(c,i), labels.map(l => (agg[c]&&agg[c][l]) ? agg[c][l].pax : 0), false)
+  }));
+  mk('paxChart', {type:'line', data:{labels, datasets}, options:{responsive:true,maintainAspectRatio:false,
+    plugins:{legend:{display:true,position:'top',labels:legendLabels()}}, scales:{x:xO,y:yO,y1:y1O}}});
+
+  const perLoanDs = channels.map((c,i) => ({
+    label: c, yAxisID: axisFor(c),
+    ...lineDs(colorForChannel(c,i), labels.map(l => {
+      const b = agg[c] && agg[c][l];
+      return b && b.loans ? b.pax/b.loans : null;
+    }), false)
+  }));
+  mk('paxPerLoanChart', {type:'line', data:{labels, datasets:perLoanDs}, options:{responsive:true,maintainAspectRatio:false,
+    plugins:{legend:{display:true,position:'top',labels:legendLabels()}}, scales:{x:xO,y:yO,y1:y1O}}});
+}
+
+// ── CATEGORY BREAKDOWNS (Term / Device / Fare) ───────────────────────
+function cleanCatLabel(v) {
+  const s = v == null ? 'Unknown' : String(v);
+  return s.match(/^\d+\.0$/) ? s.slice(0, -2) : s;
+}
+function aggregateCategory(dataset, sortFn) {
+  // dataset rows: [partner, channel, date_idx, category, loan_count]
+  const result = {}; // channel -> category -> count
+  const allCats = new Set();
+  dataset.forEach(row => {
+    const partner = row[0], channel = row[1], dateIdx = row[2], cat = row[3], count = row[4];
+    if (!matchesPartner(partner) || dateIdx == null) return;
+    const key = groupKeyFor(channel);
+    if (key == null) return;
+    const dPos = dateIdx - DATES_MIN_IDX;
+    if (dPos < rfrom || dPos > rto) return;
+    if (!result[key]) result[key] = {};
+    const c = cleanCatLabel(cat);
+    result[key][c] = (result[key][c]||0) + (count||0);
+    allCats.add(c);
+  });
+  const categories = Array.from(allCats).sort(sortFn || undefined);
+  return { result, categories };
+}
+function numericSort(a, b) {
+  const na = parseFloat(a), nb = parseFloat(b);
+  if (!isNaN(na) && !isNaN(nb)) return na - nb;
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+function renderCategoryPage(pageId, dataset, title, sub, sortFn, noteHtml) {
+  const { result, categories } = aggregateCategory(dataset, sortFn);
+  const el = document.getElementById(pageId);
+  el.innerHTML = `
+    <div class="pt">${title}</div><div class="ps">${sub}</div>
+    ${noteHtml || ''}
+    <div id="${pageId}-charts"></div>
+  `;
+  const container = document.getElementById(pageId+'-charts');
+  container.innerHTML = channels.map((c,i) => `
+    <div class="card" style="margin-bottom:9px"><div class="ct">${c}</div><div class="cw" style="height:170px"><canvas id="${pageId}-c${i}"></canvas></div></div>
+  `).join('');
+  channels.forEach((c,i) => {
+    const vals = categories.map(cat => (result[c]&&result[c][cat]) || 0);
+    mk(pageId+'-c'+i, {type:'bar', data:{labels:categories, datasets:[{data:vals, backgroundColor:colorFor(i), borderRadius:3}]},
+      plugins: [pctOfTotalPlugin],
+      options:{responsive:true,maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{x:xCatO,y:yO}}});
+  });
+}
+
+function renderTerm() { renderCategoryPage('page-term', DATA.loan_term_daily, 'Loan Term', 'Distribution of loan terms (months), by channel', numericSort); }
+function renderDevice() { renderCategoryPage('page-device', DATA.device_type_daily, 'Device Type', 'Loan distribution by device, by channel'); }
+function renderFare() {
+  const { result, categories } = aggregateCategory(DATA.fare_class_daily);
+  const globalTotal = {};
+  categories.forEach(cat => {
+    globalTotal[cat] = channels.reduce((sum, c) => sum + ((result[c] && result[c][cat]) || 0), 0);
+  });
+
+  // Fixed priority order for these named categories - shown in exactly
+  // this sequence regardless of their individual volume ranking.
+  const FARE_PRIORITY = ['Discounted Economy','Economy/Basic','Economy+','Main','Saver','Choice','Wanna Get Away','Business Class','First Class'];
+  const priorityPresent = FARE_PRIORITY.filter(cat => categories.includes(cat));
+  // Fill remaining slots (up to 15 total) with whatever's left by volume,
+  // excluding the priority categories and excluding Unknown - Unknown
+  // always gets forced to sit right before Other, not ranked by volume.
+  const remaining = categories.filter(cat => !FARE_PRIORITY.includes(cat) && cat !== 'Unknown');
+  const remainingSorted = remaining.sort((a,b) => globalTotal[b]-globalTotal[a]);
+  const fillCount = Math.max(0, 15 - priorityPresent.length);
+  const fillers = remainingSorted.slice(0, fillCount);
+  const topSet = new Set([...priorityPresent, ...fillers]);
+  const hasUnknown = categories.includes('Unknown');
+  const displayCategories = [...priorityPresent, ...fillers, ...(hasUnknown ? ['Unknown'] : []), 'Other'];
+
+  const el = document.getElementById('page-fare');
+  const fareNote = `<div class="note">Several raw fare_class values have been consolidated for readability: <b>Wanna Get Away</b> (from WGA) \u00b7 <b>Economy/Basic</b> (from Economy, Basic, Standard, Econo, United Economy, Coach, and the fare basis codes B/Y/M/H) \u00b7 <b>Discounted Economy</b> (fare basis codes U/Q/V/G/K/L/N/S/T) \u00b7 <b>Premium Economy</b> (fare basis codes W/E) \u00b7 <b>Economy+</b> (from PLU) \u00b7 <b>Business Class</b> (from Business, BUS, BF - Spirit's "Big Front Seat" - United Business, United Polaris business, and the fare basis codes J/C/D/I/Z/P) \u00b7 <b>First Class</b> (from United First, FirstClass, and the fare basis codes R/F/A). Alaska's "Main" and "Saver" fares are intentionally left separate, not merged into Economy/Basic. Case differences (e.g. Economy vs. economy vs. ECONOMY) are also automatically combined throughout. Order shown: Discounted Economy \u2192 Economy/Basic \u2192 Economy+ \u2192 Main \u2192 Saver \u2192 Choice \u2192 Wanna Get Away \u2192 Business Class \u2192 First Class, then remaining categories by volume, with Unknown and Other always last.</div>`;
+  el.innerHTML = `
+    <div class="pt">Fare Class</div><div class="ps">Distribution of fare class, by channel</div>
+    ${fareNote}
+    <div id="page-fare-charts"></div>
+  `;
+  const container = document.getElementById('page-fare-charts');
+  container.innerHTML = channels.map((c,i) => `
+    <div class="card" style="margin-bottom:9px"><div class="ct">${c}</div><div class="cw" style="height:170px"><canvas id="page-fare-c${i}"></canvas></div></div>
+  `).join('');
+  channels.forEach((c,i) => {
+    const vals = displayCategories.map(cat => {
+      if (cat === 'Other') {
+        return categories.filter(cc => !topSet.has(cc) && cc !== 'Unknown').reduce((sum, cc) => sum + ((result[c] && result[c][cc]) || 0), 0);
+      }
+      return (result[c] && result[c][cat]) || 0;
+    });
+    mk('page-fare-c'+i, {type:'bar', data:{labels:displayCategories, datasets:[{data:vals, backgroundColor:colorFor(i), borderRadius:3}]},
+      plugins: [pctOfTotalPlugin],
+      options:{responsive:true,maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{x:xCatO,y:yO}}});
+  });
+}
+
+// ── UNIQUE CUSTOMERS ──────────────────────────────────────────────────
+// All-time metric, intentionally NOT affected by the date filter -
+// same reasoning as the Emirates-only dashboard: distinct-customer
+// counts can't be sliced across time periods without double-counting.
+function renderUniq() {
+  const grouped = {}; // key -> {total, minLaunch}
+  DATA.total_unique_customers.forEach(r => {
+    if (!matchesPartner(r[0])) return;
+    const key = groupKeyFor(r[1]);
+    if (key == null) return;
+    if (!grouped[key]) grouped[key] = {total:0, minLaunch:null};
+    grouped[key].total += (r[2]||0);
+    if (r[3] && (grouped[key].minLaunch == null || r[3] < grouped[key].minLaunch)) grouped[key].minLaunch = r[3];
+  });
+  const rows = channels.map(c => [c, grouped[c] ? grouped[c].total : 0, grouped[c] ? grouped[c].minLaunch : null]);
+  const el = document.getElementById('page-uniq');
+  const total = rows.reduce((a,r)=>a+(r[1]||0),0);
+  el.innerHTML = `
+    <div class="pt">Unique Customers</div><div class="ps">All-time, by channel</div>
+    <div class="note">This section always shows the true all-time total, regardless of the date filter above - distinct-customer counts can't be correctly sliced across time periods without double-counting repeat customers. The "Combined" figure below is a SUM of ${currentPartner===ALL_PARTNERS ? 'each partner\u2019s own distinct count' : 'this partner\u2019s per-channel distinct counts'} - a customer who used more than one ${currentPartner===ALL_PARTNERS ? 'partner' : 'channel'} would be counted once per ${currentPartner===ALL_PARTNERS ? 'partner' : 'channel'}, so "Combined" is likely a slight overstatement of the true distinct total${currentPartner===ALL_PARTNERS ? ' - and more so here than in single-partner mode, since the chance of overlap is higher across 36 partners than across one partner\u2019s own channels' : ''}.</div>
+    <div class="kr" style="grid-template-columns:repeat(${Math.min(channels.length+1,6)},1fr);margin-top:9px">
+      ${rows.map(r => `<div class="kpi ak"><div class="kl">${r[0]}</div><div class="kv">${Math.round(r[1]).toLocaleString()}</div><div class="ks">${r[2] ? 'Earliest launch: '+r[2].slice(0,10) : ''}</div></div>`).join('')}
+      <div class="kpi"><div class="kl">Combined</div><div class="kv">${Math.round(total).toLocaleString()}</div></div>
+    </div>
+    <div class="card"><div class="ct">Unique customers by channel</div><div class="cw" style="height:180px"><canvas id="uniqChart"></canvas></div></div>
+  `;
+  mk('uniqChart', {type:'bar', data:{labels:rows.map(r=>r[0]), datasets:[{data:rows.map(r=>r[1]), backgroundColor:rows.map((_,i)=>colorFor(i)), borderRadius:5, barPercentage:.5}]},
+    options:{responsive:true,maintainAspectRatio:false,indexAxis:'y',plugins:{legend:{display:false}},
+      scales:{x:{ticks:{font:{size:10}}},y:{ticks:{font:{size:11}},grid:{display:false}}}}});
+}
+
+// ── NEW VS REPEAT ─────────────────────────────────────────────────────
+function quarterBounds(q) {
+  const [qq,yy] = q.split('-'); const qn = +qq.slice(1); const y = +yy;
+  const startMonth = (qn-1)*3+1;
+  const start = `${y}-${String(startMonth).padStart(2,'0')}-01`;
+  const endMonth = startMonth+2;
+  const lastDay = new Date(y, endMonth, 0).getDate();
+  const end = `${y}-${String(endMonth).padStart(2,'0')}-${String(lastDay).padStart(2,'0')}`;
+  return [start, end];
+}
+let repChannel = null;
+function setRepChannel(c, el) {
+  repChannel = c;
+  document.querySelectorAll('#page-rep .ptt').forEach(b=>b.classList.remove('active'));
+  el.classList.add('active');
+  renderRep();
+}
+function renderRep() {
+  if (!repChannel || !channels.includes(repChannel)) repChannel = channels[0];
+  const el = document.getElementById('page-rep');
+  el.innerHTML = `
+    <div class="pt">New vs Repeat Customers</div><div class="ps">New = first loan with this partner that quarter \u00b7 Repeat = prior loan in an earlier quarter</div>
+    <div class="note">Responds to the date filter above by quarter overlap. History may extend earlier than other sections' daily data.${currentPartner===ALL_PARTNERS ? ' In All Partners mode, "New/Repeat" is scoped within each partner separately, then summed - a customer new to one partner but repeat with another still counts once as New and once as Repeat.' : ''}</div>
+    <div class="ptbar" style="margin-top:9px"><span class="ptlbl">Channel:</span>
+      ${channels.map((c,i)=>`<button class="ptt${c===repChannel?' active':''}" onclick="setRepChannel('${c}',this)">${c}</button>`).join('')}
+    </div>
+    <div class="card" style="margin-bottom:9px"><div class="ct">New vs Repeat \u2014 Quarterly</div><div class="cw" style="height:210px"><canvas id="repChart"></canvas></div></div>
+    <div class="card"><div class="ct">Repeat % trend</div><div class="cw" style="height:145px"><canvas id="repPct"></canvas></div></div>
+  `;
+  const byQuarter = {};
+  DATA.new_vs_repeat.forEach(r => {
+    if (!matchesPartner(r[0])) return;
+    if (groupKeyFor(r[1]) !== repChannel) return;
+    const [qs,qe] = quarterBounds(r[2]);
+    if (!(qe >= filFrom && qs <= filTo)) return;
+    if (!byQuarter[r[2]]) byQuarter[r[2]] = {newU:0, repU:0};
+    byQuarter[r[2]].newU += (r[3]||0);
+    byQuarter[r[2]].repU += (r[9]||0);
+  });
+  const quarters = Object.keys(byQuarter).sort(bucketSort);
+  const labels = quarters;
+  const newU = quarters.map(q => byQuarter[q].newU);
+  const repU = quarters.map(q => byQuarter[q].repU);
+  const repPct = quarters.map(q => {
+    const t = byQuarter[q].newU + byQuarter[q].repU;
+    return t ? Math.round(byQuarter[q].repU/t*1000)/10 : 0;
+  });
+  mk('repChart', {type:'bar', data:{labels, datasets:[
+    {label:'New', data:newU, backgroundColor:colorFor(0), borderRadius:2},
+    {label:'Repeat', data:repU, backgroundColor:AMBER, borderRadius:2}
+  ]}, plugins: [pctOfStackPlugin], options:{responsive:true,maintainAspectRatio:false,
+    plugins:{legend:{display:true,position:'top',labels:{font:{size:10},boxWidth:10}}},
+    scales:{x:{...xO,stacked:true},y:{...yO,stacked:true}}}});
+  mk('repPct', {type:'line', data:{labels, datasets:[{data:repPct,borderColor:AMBER,backgroundColor:hexToRgba(AMBER,0.12),borderWidth:2,tension:.3,pointRadius:3,fill:true}]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},
+      scales:{x:xO,y:{...yO,min:0,max:100,ticks:{...yO.ticks,callback:v=>v+'%'}}}}});
+}
+
+// ── GENERATION MIX ────────────────────────────────────────────────────
+const GEN_ORDER = ['Alpha','Gen Z','Gen Y (Millennials)','Gen X','Baby Boomers II','Baby Boomers I','Post War','WWII','Unknown'];
+function genSort(a, b) {
+  const ia = GEN_ORDER.indexOf(a), ib = GEN_ORDER.indexOf(b);
+  if (ia === -1 && ib === -1) return a < b ? -1 : a > b ? 1 : 0;
+  if (ia === -1) return 1;
+  if (ib === -1) return -1;
+  return ia - ib;
+}
+let genPeriod = null;
+function setGenPeriod(p, el) {
+  genPeriod = p;
+  document.querySelectorAll('#page-gen .ptog').forEach(b=>b.classList.remove('active'));
+  el.classList.add('active');
+  renderGen();
+}
+function renderGen() {
+  const rows = DATA.demographics.filter(r => matchesPartner(r[0]));
+  const periods = Array.from(new Set(rows.map(r=>r[3]))).sort();
+  if (!genPeriod || !periods.includes(genPeriod)) genPeriod = periods[periods.length-1];
+  const el = document.getElementById('page-gen');
+  el.innerHTML = `
+    <div class="pt">Generation Mix</div><div class="ps">By unique customers, by channel</div>
+    <div class="note">Uses its own period toggle below, not the main date filter above.</div>
+    <div class="ptogrow" style="margin-top:9px">
+      ${periods.map(p=>`<button class="ptog${p===genPeriod?' active':''}" onclick="setGenPeriod('${p}',this)">${p}</button>`).join('')}
+    </div>
+    <div id="gen-charts"></div>
+  `;
+  const container = document.getElementById('gen-charts');
+  container.innerHTML = channels.map((c,i) => `
+    <div class="card" style="margin-bottom:9px"><div class="ct">${c}</div><div class="cw" style="height:170px"><canvas id="gen-c${i}"></canvas></div></div>
+  `).join('');
+  channels.forEach((c,i) => {
+    const cRows = rows.filter(r => groupKeyFor(r[1])===c && r[3]===genPeriod);
+    const byGen = {};
+    cRows.forEach(r => { byGen[r[2]] = (byGen[r[2]]||0) + (r[5]||0); });
+    const gens = Object.keys(byGen).sort(genSort);
+    mk('gen-c'+i, {type:'bar', data:{labels:gens, datasets:[{data:gens.map(g=>byGen[g]), backgroundColor:colorFor(i), borderRadius:3}]},
+      plugins: [pctOfTotalPlugin],
+      options:{responsive:true,maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{x:xCatO,y:yO}}});
+  });
+}
+
+// ── ROUTES ────────────────────────────────────────────────────────────
+function renderRouteTable(pageId, dataset, title, keyLabel) {
+  const rows = dataset.filter(r => matchesPartner(r[0]));
+  const el = document.getElementById(pageId);
+  const caveat = currentPartner===ALL_PARTNERS
+    ? ' \u00b7 best-effort combine of each partner\'s own pre-computed top 10 - a route ranked just outside the top 10 for every individual partner/channel could be missing here even if its true combined total would rank higher'
+    : '';
+  el.innerHTML = `
+    <div class="pt">${title}</div><div class="ps">Top 10 by loan count, by channel \u00b7 trailing 12 months \u00b7 GMV in ${curr.toUpperCase()} \u00b7 not affected by date filter${caveat}</div>
+    <div id="${pageId}-tables"></div>
+  `;
+  const container = document.getElementById(pageId+'-tables');
+  container.className = 'g2';
+  container.innerHTML = channels.map(c => `
+    <div class="card"><div class="ct">${c}</div><table class="dt" id="${pageId}-t-${c.replace(/[^a-zA-Z0-9]/g,'')}"></table></div>
+  `).join('');
+  channels.forEach(c => {
+    const cRows = rows.filter(r => groupKeyFor(r[1])===c);
+    // Merge by route name (route field is index 2), summing loan_count/gmv
+    // across every partner/channel row that shares that route - this is
+    // "best effort" because each source row was already pre-limited to
+    // that channel's own top 10, so a route just outside rank 10
+    // everywhere never appears here to be merged in the first place.
+    const merged = {};
+    cRows.forEach(r => {
+      const key = r[2];
+      if (!merged[key]) merged[key] = {route:key, loans:0, gmvUsd:0, gmvCad:0};
+      merged[key].loans += (r[3]||0);
+      merged[key].gmvUsd += (r[4]||0);
+      merged[key].gmvCad += (r[5]||0);
+    });
+    const top10 = Object.values(merged).sort((a,b)=>b.loans-a.loans).slice(0,10);
+    const tbl = document.getElementById(pageId+'-t-'+c.replace(/[^a-zA-Z0-9]/g,''));
+    tbl.innerHTML = `<thead><tr><th>#</th><th>${keyLabel}</th><th class="r">Loans</th><th class="r">GMV</th></tr></thead>
+      <tbody>${top10.map((r,i)=>`<tr><td><span class="rb">${i+1}</span></td><td>${r.route}</td><td class="r">${Math.round(r.loans).toLocaleString()}</td><td class="r">${fmS(curr==='cad'?r.gmvCad:r.gmvUsd)}</td></tr>`).join('')}</tbody>`;
+  });
+}
+function renderOD() { renderRouteTable('page-od', DATA.top_10_ods, 'Top 10 O&Ds', 'O&D'); }
+function renderOrig() { renderRouteTable('page-orig', DATA.top_10_origins, 'Top 10 Origins', 'Origin'); }
+function renderDest() { renderRouteTable('page-dest', DATA.top_10_destinations, 'Top 10 Destinations', 'Destination'); }
+
+// ── RENDER ALL ────────────────────────────────────────────────────────
+function renderAll() {
+  renderSummary(); renderLoans(); renderGMV(); renderSub(); renderBW(); renderFico(); renderPax();
+  renderTerm(); renderDevice(); renderFare();
+  renderUniq(); renderRep(); renderGen();
+  renderOD(); renderOrig(); renderDest();
+}
+</script>
+</body>
+</html>
