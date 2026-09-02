@@ -1,0 +1,53 @@
+SELECT
+    COALESCE(l.partner_grouping_legacy, l.partner_grouping_redshift, l.partner_group_legacy) AS partner_group,
+    l.partner_short,
+    l.hotel_name,
+    l.merchant_field_1,
+    l.merchant_field_2,
+    l.loan_id,
+    l.date_etz                                          AS loan_date,
+    l.gmv_usd,
+    l.gmv_cad,
+    l.is_subvented,
+    l.num_of_travelers_incl_minors                       AS passengers,
+    TRY_CAST(l.booking_window AS DOUBLE)                  AS booking_window,
+    TRY_CAST(l.fico AS DOUBLE)                            AS fico,
+    CAST(l.loan_term AS STRING)                           AS loan_term,
+    TRIM(SPLIT(l.air_fare_classes, '|')[0])               AS fare_class,
+    l.device_type,
+    l.channel                                             AS channel_type,
+    l.air_od,
+    l.air_origin,
+    l.air_destination,
+    CASE
+        WHEN YEAR(a.date_of_birth) BETWEEN 2013 AND 2025 THEN 'Alpha'
+        WHEN YEAR(a.date_of_birth) BETWEEN 1997 AND 2012 THEN 'Gen Z'
+        WHEN YEAR(a.date_of_birth) BETWEEN 1981 AND 1996 THEN 'Gen Y (Millennials)'
+        WHEN YEAR(a.date_of_birth) BETWEEN 1965 AND 1980 THEN 'Gen X'
+        WHEN YEAR(a.date_of_birth) BETWEEN 1955 AND 1964 THEN 'Baby Boomers II'
+        WHEN YEAR(a.date_of_birth) BETWEEN 1946 AND 1954 THEN 'Baby Boomers I'
+        WHEN YEAR(a.date_of_birth) BETWEEN 1928 AND 1945 THEN 'Post War'
+        WHEN YEAR(a.date_of_birth) BETWEEN 1922 AND 1927 THEN 'WWII'
+        ELSE 'Unknown'
+    END AS generation,
+    l.merchant_path,
+    l.cruise_line,
+    l.ship_name,
+    l.cruise_duration,
+    l.embark_date,
+    l.disembark_date,
+    l.cruise_od,
+    l1.partner_confirmation,
+    c.ship_code,
+    c.ship_name_lookup,
+    CASE
+        WHEN l1.partner_confirmation IS NULL OR TRIM(l1.partner_confirmation) = '' THEN 0
+        ELSE (LENGTH(l1.partner_confirmation) - LENGTH(REPLACE(l1.partner_confirmation, ',', ''))) + 1
+    END AS cabin_count
+FROM `commercial_analytics`.`public`.`bi_loan_detailed` l
+JOIN `commercial_analytics`.`public`.`bi_loan` l1 ON l.loan_id = l1.loan_id
+JOIN commercial_analytics.commercial_analytics.application_bnpl a ON a.application_id = l.loan_id
+JOIN commercial_analytics.commercial_analytics.cruise_reservations_ships c ON l.order_request_id = c.order_request_id
+WHERE 1=1
+  AND lower(l.vertical) = 'cruise'
+ORDER BY partner_group, partner_short, loan_date
